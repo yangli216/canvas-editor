@@ -80,7 +80,12 @@ window.onload = function () {
       capture: true
     }
   )
-
+  const saveElement = document.querySelector<HTMLDivElement>('.btn-save')!
+  saveElement.onclick = function () {
+    console.log('save')
+    const content = instance.command.getValue()
+    console.log(content)
+  }
   // 2. | 撤销 | 重做 | 格式刷 | 清除格式 |
   const undoDom = document.querySelector<HTMLDivElement>('.menu-item__undo')!
   undoDom.title = `撤销(${isApple ? '⌘' : 'Ctrl'}+Z)`

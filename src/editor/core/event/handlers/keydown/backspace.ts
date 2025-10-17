@@ -105,6 +105,22 @@ export function backspace(evt: KeyboardEvent, host: CanvasEvent) {
         return
       }
     }
+    // 检查元素是否可删除
+    if (isCollapsed) {
+      const targetElement = elementList[index]
+      if (targetElement?.title?.deletable === false) {
+        evt.preventDefault()
+        return
+      }
+    } else {
+      // 检查选区内是否包含不可删除元素
+      for (let i = startIndex + 1; i <= endIndex; i++) {
+        if (elementList[i]?.title?.deletable === false) {
+          evt.preventDefault()
+          return
+        }
+      }
+    }
     //  替换当前行对齐方式
     const startElement = elementList[startIndex]
     if (isCollapsed && startElement.rowFlex && startElement.value === ZERO) {

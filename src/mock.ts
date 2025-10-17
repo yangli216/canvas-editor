@@ -74,7 +74,11 @@ while (index < textList.length) {
           value: title,
           size: 18
         }
-      ]
+      ],
+      title: {
+        deletable: false,
+        disabled: true
+      }
     })
     index += title.length - 1
   } else if (colorIndex.includes(index)) {
@@ -101,7 +105,7 @@ while (index < textList.length) {
 // 模拟文本控件
 elementList.splice(12, 0, {
   type: ElementType.CONTROL,
-  value: '',
+  value: '123',
   control: {
     conceptId: '1',
     type: ControlType.TEXT,
@@ -354,7 +358,7 @@ elementList.push(
       type: ElementType.CONTROL,
       control: {
         conceptId: '3',
-        type: ControlType.CHECKBOX,
+        type: ControlType.RADIO,
         code: '98175',
         value: '',
         valueSets: [
