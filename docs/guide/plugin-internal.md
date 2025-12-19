@@ -1,7 +1,7 @@
 # 官方插件
 
 ::: tip
-官方维护插件仓库：https://github.com/Hufe921/canvas-editor-plugin
+官方维护插件仓库：https://github.com/yangl/canvas-editor-plugin
 
 官方维护插件演示地址：https://hufe.club/canvas-editor-plugin
 :::
@@ -9,8 +9,8 @@
 ## 条形码
 
 ```javascript
-import Editor from "@hufe921/canvas-editor"
-import barcode1DPlugin from "@hufe921/canvas-editor-plugin-barcode1d"
+import Editor from "@yangl/canvas-editor"
+import barcode1DPlugin from "@yangl/canvas-editor-plugin-barcode1d"
 
 const instance = new Editor()
 instance.use(barcode1DPlugin)
@@ -26,8 +26,8 @@ instance.executeInsertBarcode1D(
 ## 二维码
 
 ```javascript
-import Editor from "@hufe921/canvas-editor"
-import barcode2DPlugin from "@hufe921/canvas-editor-plugin-barcode2d"
+import Editor from "@yangl/canvas-editor"
+import barcode2DPlugin from "@yangl/canvas-editor-plugin-barcode2d"
 
 const instance = new Editor()
 instance.use(barcode2DPlugin, options?: IBarcode2DOption)
@@ -43,8 +43,8 @@ instance.executeInsertBarcode2D(
 ## 代码块
 
 ```javascript
-import Editor from "@hufe921/canvas-editor"
-import codeblockPlugin from "@hufe921/canvas-editor-plugin-codeblock"
+import Editor from "@yangl/canvas-editor"
+import codeblockPlugin from "@yangl/canvas-editor-plugin-codeblock"
 
 const instance = new Editor()
 instance.use(codeblockPlugin)
@@ -55,8 +55,8 @@ instance.executeInsertCodeblock(content: string)
 ## Word
 
 ```javascript
-import Editor from '@hufe921/canvas-editor'
-import docxPlugin from '@hufe921/canvas-editor-plugin-docx'
+import Editor from '@yangl/canvas-editor'
+import docxPlugin from '@yangl/canvas-editor-plugin-docx'
 
 const instance = new Editor()
 instance.use(docxPlugin)
@@ -73,8 +73,8 @@ instance.executeExportDocx({
 ## Excel
 
 ```javascript
-import Editor from '@hufe921/canvas-editor'
-import excelPlugin from '@hufe921/canvas-editor-plugin-excel'
+import Editor from '@yangl/canvas-editor'
+import excelPlugin from '@yangl/canvas-editor-plugin-excel'
 
 const instance = new Editor()
 instance.use(excelPlugin)
@@ -87,8 +87,8 @@ command.executeImportExcel({
 ## 悬浮工具
 
 ```javascript
-import Editor from '@hufe921/canvas-editor'
-import floatingToolbarPlugin from '@hufe921/canvas-editor-plugin-floating-toolbar'
+import Editor from '@yangl/canvas-editor'
+import floatingToolbarPlugin from '@yangl/canvas-editor-plugin-floating-toolbar'
 
 const instance = new Editor()
 instance.use(floatingToolbarPlugin)
@@ -97,8 +97,8 @@ instance.use(floatingToolbarPlugin)
 ## 流程图
 
 ```javascript
-import Editor from '@hufe921/canvas-editor'
-import diagramPlugin from '@hufe921/canvas-editor-plugin-diagram'
+import Editor from '@yangl/canvas-editor'
+import diagramPlugin from '@yangl/canvas-editor-plugin-diagram'
 
 const instance = new Editor()
 instance.use(diagramPlugin)
@@ -113,8 +113,8 @@ command.executeLoadDiagram({
 ## 大小写转换
 
 ```javascript
-import Editor from '@hufe921/canvas-editor'
-import casePlugin from '@hufe921/canvas-editor-plugin-case'
+import Editor from '@yangl/canvas-editor'
+import casePlugin from '@yangl/canvas-editor-plugin-case'
 
 const instance = new Editor()
 instance.use(casePlugin)

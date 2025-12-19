@@ -2,10 +2,10 @@
 
 > 所见即所得的富文本编辑器。
 
-得益于光标及文字排版的完全自行实现。绘制底层也可由 svg 渲染，详见代码：[feature/svg](https://github.com/Hufe921/canvas-editor/tree/feature/svg)；或借助 pdfjs 可以完成 pdf 的绘制，详见代码：[feature/pdf](https://github.com/Hufe921/canvas-editor/tree/feature/pdf)。
+得益于光标及文字排版的完全自行实现。绘制底层也可由 svg 渲染，详见代码：[feature/svg](https://github.com/yangl/canvas-editor/tree/feature/svg)；或借助 pdfjs 可以完成 pdf 的绘制，详见代码：[feature/pdf](https://github.com/yangl/canvas-editor/tree/feature/pdf)。
 
 ::: warning
-官方仅提供编辑器核心层 npm 包，菜单栏或其他外部工具可自行参考文档扩展，或直接参考[官方](https://github.com/Hufe921/canvas-editor)实现，详见[demo](https://hufe.club/canvas-editor/)。
+官方仅提供编辑器核心层 npm 包，菜单栏或其他外部工具可自行参考文档扩展，或直接参考[官方](https://github.com/yangl/canvas-editor)实现，详见[demo](https://hufe.club/canvas-editor/)。
 :::
 
 ## 功能点
@@ -23,7 +23,7 @@
 - 水印
 - 批注
 - 目录
-- [插件](https://github.com/Hufe921/canvas-editor-plugin)
+- [插件](https://github.com/yangl/canvas-editor-plugin)
 
 ## 待开发
 
@@ -35,7 +35,7 @@
 ## Step. 1: 下载 npm 包
 
 ```sh
-npm i @hufe921/canvas-editor --save
+npm i @yangl/canvas-editor --save
 ```
 
 ## Step. 2: 准备一个容器
@@ -49,7 +49,7 @@ npm i @hufe921/canvas-editor --save
 - 仅包含正文内容
 
 ```javascript
-import Editor from '@hufe921/canvas-editor'
+import Editor from '@yangl/canvas-editor'
 
 new Editor(
   document.querySelector('.canvas-editor'),
@@ -65,7 +65,7 @@ new Editor(
 - 包含正文、页眉、页脚内容
 
 ```javascript
-import Editor from '@hufe921/canvas-editor'
+import Editor from '@yangl/canvas-editor'
 
 new Editor(
   document.querySelector('.canvas-editor'),

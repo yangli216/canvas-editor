@@ -3,7 +3,7 @@
 ## How to Use
 
 ```javascript
-import Editor from "@hufe921/canvas-editor"
+import Editor from "@yangl/canvas-editor"
 
 const instance = new Editor(container, <IElement[]>data, options)
 instance.register.contextMenuList([

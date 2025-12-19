@@ -11,25 +11,27 @@
 </p>
 
 <p align="center">
-<a href="https://www.npmjs.com/package/@hufe921/canvas-editor" target="_blank"><img src="https://img.shields.io/npm/v/@hufe921/canvas-editor.svg?sanitize=true" alt="Version"></a>
- <a href="https://github.com/hufe921/canvas-editor/actions" target="_blank">
-  <img alt="Cypress Passing" src="https://github.com/hufe921/canvas-editor/workflows/cypress/badge.svg" />
+<a href="https://www.npmjs.com/package/@yangl/canvas-editor" target="_blank"><img src="https://img.shields.io/npm/v/@yangl/canvas-editor.svg?sanitize=true" alt="Version"></a>
+ <a href="https://github.com/yangl/canvas-editor/actions" target="_blank">
+  <img alt="Cypress Passing" src="https://github.com/yangl/canvas-editor/workflows/cypress/badge.svg" />
 </a>
-<a href="https://github.com/hufe921/canvas-editor/graphs/contributors" target="_blank">
-  <img alt="GitHub Contributors" src="https://img.shields.io/github/contributors/hufe921/canvas-editor" />
+<a href="https://github.com/yangl/canvas-editor/graphs/contributors" target="_blank">
+  <img alt="GitHub Contributors" src="https://img.shields.io/github/contributors/yangl/canvas-editor" />
 </a>
-<a href="https://www.npmjs.com/package/@hufe921/canvas-editor" target="_blank"><img src="https://img.shields.io/npm/l/@hufe921/canvas-editor.svg?sanitize=true" alt="License"></a>
-<a href="https://github.com/Hufe921/canvas-editor/issues/new/choose" target="_blank"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs"></a>
-<a href="https://zread.ai/Hufe921/canvas-editor" target="_blank"><img src="https://img.shields.io/badge/Ask_Zread-_.svg?style=flat&color=00b0aa&labelColor=000000&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTQuOTYxNTYgMS42MDAxSDIuMjQxNTZDMS44ODgxIDEuNjAwMSAxLjYwMTU2IDEuODg2NjQgMS42MDE1NiAyLjI0MDFWNC45NjAxQzEuNjAxNTYgNS4zMTM1NiAxLjg4ODEgNS42MDAxIDIuMjQxNTYgNS42MDAxSDQuOTYxNTZDNS4zMTUwMiA1LjYwMDEgNS42MDE1NiA1LjMxMzU2IDUuNjAxNTYgNC45NjAxVjIuMjQwMUM1LjYwMTU2IDEuODg2NjQgNS4zMTUwMiAxLjYwMDEgNC45NjE1NiAxLjYwMDFaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00Ljk2MTU2IDEwLjM5OTlIMi4yNDE1NkMxLjg4ODEgMTAuMzk5OSAxLjYwMTU2IDEwLjY4NjQgMS42MDE1NiAxMS4wMzk5VjEzLjc1OTlDMS42MDE1NiAxNC4xMTM0IDEuODg4MSAxNC4zOTk5IDIuMjQxNTYgMTQuMzk5OUg0Ljk2MTU2QzUuMzE1MDIgMTQuMzk5OSA1LjYwMTU2IDE0LjExMzQgNS42MDE1NiAxMy43NTk5VjExLjAzOTlDNS42MDE1NiAxMC42ODY0IDUuMzE1MDIgMTAuMzk5OSA0Ljk2MTU2IDEwLjM5OTlaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik0xMy43NTg0IDEuNjAwMUgxMS4wMzg0QzEwLjY4NSAxLjYwMDEgMTAuMzk4NCAxLjg4NjY0IDEwLjM5ODQgMi4yNDAxVjQuOTYwMUMxMC4zOTg0IDUuMzEzNTYgMTAuNjg1IDUuNjAwMSAxMS4wMzg0IDUuNjAwMUgxMy43NTg0QzE0LjExMTkgNS42MDAxIDE0LjM5ODQgNS4zMTM1NiAxNC4zOTg0IDQuOTYwMVYyLjI0MDFDMTQuMzk4NCAxLjg4NjY0IDE0LjExMTkgMS42MDAxIDEzLjc1ODQgMS42MDAxWiIgZmlsbD0iI2ZmZiIvPgo8cGF0aCBkPSJNNCAxMkwxMiA0TDQgMTJaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00IDEyTDEyIDQiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K&logoColor=ffffff" alt="zread"/></a>
-<a href="https://deepwiki.com/Hufe921/canvas-editor" target="_blank"><img src="https://img.shields.io/badge/Ask_DeepWiki-_.svg?style=flat&color=0094de&labelColor=000000&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGNsYXNzPSJzaXplLTQgdHJhbnNmb3JtIHRyYW5zaXRpb24tdHJhbnNmb3JtIGR1cmF0aW9uLTcwMCBncm91cC1ob3Zlcjpyb3RhdGUtMTgwIFsmYW1wO19wYXRoXTpzdHJva2UtMCIgdmlld0JveD0iMTEwIDExMCA0NjAgNTAwIj48cGF0aCBkPSJNNDE5IDMzMnExNi03IDMyIDBsMjUgMTUgMyAxIDMgMSAzLTEgMy0xIDUxLTI5cTYtMyA2LTExdi01OHEwLTgtNi0xMWwtNTEtMjlxLTYtMy0xMiAwbC01MSAyOXYxbC0yIDEtMiAydjFsLTEgMnYxbC0xIDN2MjlhMzIgMzIgMCAwIDEtNDggMjhsLTI1LTE1LTMtMS0zLTEtMyAxLTMgMS01MSAyOXEtNSAzLTYgMTF2NThxMSA4IDYgMTFsNTEgMjkgMyAxIDMgMSAzLTEgMy0xIDI1LTE1YTMyIDMyIDAgMCAxIDQ4IDI4djI5bDEgM3YxbDEgMnYxbDIgMiAyIDIgNTEgMjkgNiAyIDYtMiA1MS0yOXE2LTMgNi0xMXYtNThxMC04LTYtMTFsLTUxLTI5LTMtMS0zLTEtMyAxLTMgMS0yNSAxNWEzMiAzMiAwIDAgMS00OC0yOHExLTE4IDE2LTI4IiBzdHlsZT0iZmlsbDojMjFjMTlhIi8+PHBhdGggZD0ibTE0MSAzMTggNTEgMjkgNiAyIDYtMiA1MS0yOXYtMWwyLTEgMi0ydi0xbDEtMnYtMWwxLTN2LTI5YTMyIDMyIDAgMCAxIDQ4LTI4bDI1IDE1IDMgMSAzIDEgMy0xIDMtMSA1MS0yOXE2LTMgNi0xMXYtNThxMC04LTYtMTFsLTUxLTI5cS02LTMtMTIgMGwtNTEgMjktMiAyaC0xbC0xIDJ2MWwtMSAydjFsLTEgM3YyOWEzMiAzMiAwIDAgMS00OCAyOGwtMjUtMTUtMy0xLTMtMS0zIDEtMyAxLTUxIDI5cS02IDMtNiAxMXY1OHEwIDggNiAxMSIgc3R5bGU9ImZpbGw6IzM5NjljYSIvPjxwYXRoIGQ9Im0zOTcgNDg0LTUxLTI5LTMtMS0zLTEtMyAxLTMgMS0yNSAxNWEzMiAzMiAwIDAgMS00OC0yOHYtMjlsLTEtM3YtMWwtMS0ydi0xbC0yLTItMi0xdi0xbC01MS0yOXEtNi0zLTEyIDBsLTUxIDI5cS02IDMtNiAxMXY1OHEwIDggNiAxMWw1MSAyOSAzIDEgMyAxIDMtMSAzLTEgMjUtMTVhMzIgMzIgMCAwIDEgNDggMjh2MjlsMSAzdjFsMSAydjFsMiAyIDIgMiA1MSAyOSA2IDIgNi0yIDUxLTI5cTYtMyA2LTExdi01OHEwLTgtNi0xMSIgc3R5bGU9ImZpbGw6IzAyOTRkZSIvPjwvc3ZnPg==&logoColor=ffffff" alt="DeepWiki"/></a>
+<a href="https://www.npmjs.com/package/@yangl/canvas-editor" target="_blank"><img src="https://img.shields.io/npm/l/@yangl/canvas-editor.svg?sanitize=true" alt="License"></a>
+<a href="https://github.com/yangl/canvas-editor/issues/new/choose" target="_blank"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs"></a>
 </p>
 
 <p align="center">
-  <a href="https://hufe.club/canvas-editor" target="_blank"><strong>Live Demo</strong></a> ·
-  <a href="https://hufe.club/canvas-editor-docs" target="_blank"><strong>Documentation</strong></a> ·
-  <a href="https://github.com/Hufe921/canvas-editor/issues/new?assignees=&labels=&projects=&template=bug_report.yml" target="_blank">Report Bug</a> ·
-  <a href="https://github.com/Hufe921/canvas-editor/issues/new?assignees=&labels=%3Asparkles%3A+feature+request&projects=&template=feature_request.yml" target="_blank">Request Feature</a> ·
-  <a href="https://github.com/Hufe921/canvas-editor/discussions" target="_blank">Discussions</a>
+  <a href="https://hufe.club/canvas-editor" target="_blank">View Demo</a>
+  ·
+  <a href="https://hufe.club/canvas-editor-docs" target="_blank">View Docs</a>
+  ·
+  <a href="https://github.com/yangl/canvas-editor/issues/new?assignees=&labels=&projects=&template=bug_report.yml" target="_blank">Report Bug</a>
+  ·
+  <a href="https://github.com/yangl/canvas-editor/issues/new?assignees=&labels=%3Asparkles%3A+feature+request&projects=&template=feature_request.yml" target="_blank">Request Feature</a>
+  ·
+  <a href="https://github.com/yangl/canvas-editor/discussions" target="_blank">FAQ</a>
 </p>
 
 <p align="center">
@@ -38,7 +40,11 @@
 
 ---
 
-## Overview
+1. Official plugin: [canvas-editor-plugin](https://github.com/yangl/canvas-editor-plugin)
+2. The render layer by svg is under development, see [feature/svg](https://github.com/yangl/canvas-editor/tree/feature/svg)
+3. The export pdf feature is available now, see [feature/pdf](https://github.com/yangl/canvas-editor/tree/feature/pdf)
+4. The AI-powered text processing demo, see [feature/ai](https://github.com/yangl/canvas-editor/tree/feature/ai)
+5. Table pagination [#41](https://github.com/yangl/canvas-editor/issues/41) is under active development, see: [poc/table-paging](https://github.com/yangl/canvas-editor/tree/poc/table-paging) · [demo](https://hufe.club/canvas-editor-table/)
 
 **Canvas Editor** is a feature-rich, WYSIWYG document editor built on top of the HTML `<canvas>` API. It is designed for use cases that demand pixel-perfect rendering, advanced typography, complex layouts, and Word-like document experiences in the browser — including EMR (Electronic Medical Records), legal contracts, reports, and other document-centric applications.
 
@@ -70,14 +76,7 @@ Unlike traditional `contenteditable`-based editors, Canvas Editor takes full con
 ## Installation
 
 ```bash
-# npm
-npm install @hufe921/canvas-editor
-
-# pnpm
-pnpm add @hufe921/canvas-editor
-
-# yarn
-yarn add @hufe921/canvas-editor
+npm i @yangl/canvas-editor --save
 ```
 
 ## Quick Start
@@ -87,7 +86,7 @@ yarn add @hufe921/canvas-editor
 ```
 
 ```javascript
-import Editor from '@hufe921/canvas-editor'
+import Editor from '@yangl/canvas-editor'
 
 const container = document.querySelector('.canvas-editor')
 
@@ -113,12 +112,14 @@ For complete API documentation, see the [official docs](https://hufe.club/canvas
 | [poc/table-paging](https://github.com/Hufe921/canvas-editor/tree/poc/table-paging) | Table pagination POC ([demo](https://hufe.club/canvas-editor-table/)) |
 | [feature/CRDT](https://github.com/Hufe921/canvas-editor/tree/feature/CRDT)         | CRDT-based collaboration (experimental)                               |
 
-## Development
+1. Table paging
+2. Control rules
+3. Improve performance
+4. [CRDT](https://github.com/yangl/canvas-editor/tree/feature/CRDT)
 
 ### Prerequisites
 
-- Node.js `>= 24.13.1`
-- pnpm (recommended)
+![image](https://github.com/yangl/canvas-editor/blob/main/src/assets/snapshots/main_v0.9.35.png)
 
 ### Setup
 

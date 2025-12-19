@@ -13,7 +13,7 @@ hero:
       link: /guide/start.html
     - theme: alt
       text: 在 GitHub 上查看
-      link: https://github.com/Hufe921/canvas-editor
+      link: https://github.com/yangl/canvas-editor
 
 features:
   - icon: 💡

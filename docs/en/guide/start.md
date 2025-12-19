@@ -2,10 +2,10 @@
 
 > WYSIWYG rich text editor.
 
-Benefit from the complete self-implementation of cursor and text layout. The underlying rendering can also be rendered by svg, See code：[feature/svg](https://github.com/Hufe921/canvas-editor/tree/feature/svg); Or complete pdf drawing with pdfjs,See code：[feature/pdf](https://github.com/Hufe921/canvas-editor/tree/feature/pdf).
+Benefit from the complete self-implementation of cursor and text layout. The underlying rendering can also be rendered by svg, See code：[feature/svg](https://github.com/yangl/canvas-editor/tree/feature/svg); Or complete pdf drawing with pdfjs,See code：[feature/pdf](https://github.com/yangl/canvas-editor/tree/feature/pdf).
 
 ::: warning
-The official only provides the editor core layer npm package, the menu bar or other external tools can refer to the document extension, or directly refer the implementation of [official](https://github.com/Hufe921/canvas-editor), See details [demo](https://hufe.club/canvas-editor/).
+The official only provides the editor core layer npm package, the menu bar or other external tools can refer to the document extension, or directly refer the implementation of [official](https://github.com/yangl/canvas-editor), See details [demo](https://hufe.club/canvas-editor/).
 :::
 
 ## Features
@@ -23,7 +23,7 @@ The official only provides the editor core layer npm package, the menu bar or ot
 - Pagination
 - Comment
 - Catalog
-- [Plugin](https://github.com/Hufe921/canvas-editor-plugin)
+- [Plugin](https://github.com/yangl/canvas-editor-plugin)
 
 ## TODO
 
@@ -35,7 +35,7 @@ The official only provides the editor core layer npm package, the menu bar or ot
 ## Step. 1: Download NPM Package
 
 ```sh
-npm i @hufe921/canvas-editor --save
+npm i @yangl/canvas-editor --save
 ```
 
 ## Step. 2: Prepare Container
@@ -49,7 +49,7 @@ npm i @hufe921/canvas-editor --save
 - Examples that only the body content is included
 
 ```javascript
-import Editor from '@hufe921/canvas-editor'
+import Editor from '@yangl/canvas-editor'
 
 new Editor(
   document.querySelector('.canvas-editor'),
@@ -65,7 +65,7 @@ new Editor(
 - Examples that contain body, header, footer content
 
 ```javascript
-import Editor from '@hufe921/canvas-editor'
+import Editor from '@yangl/canvas-editor'
 
 new Editor(
   document.querySelector('.canvas-editor'),

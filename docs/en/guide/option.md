@@ -3,7 +3,7 @@
 ## How to Use?
 
 ```javascript
-import Editor from "@hufe921/canvas-editor"
+import Editor from "@yangl/canvas-editor"
 
 new Editor(container, IEditorData | IElement[], {
   // option

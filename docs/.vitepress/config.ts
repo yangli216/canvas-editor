@@ -96,7 +96,7 @@ export default defineConfig({
     socialLinks: [
       {
         icon: 'github',
-        link: 'https://github.com/Hufe921/canvas-editor'
+        link: 'https://github.com/yangl/canvas-editor'
       }
     ],
     footer: {

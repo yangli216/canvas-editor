@@ -7,7 +7,7 @@ The listener can only respond to one method, and no new listening methods will b
 ## How to Use
 
 ```javascript
-import Editor from "@hufe921/canvas-editor"
+import Editor from "@yangl/canvas-editor"
 
 const instance = new Editor(container, <IElement[]>data, options)
 instance.listener.eventName = ()=>{}
