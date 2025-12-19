@@ -205,6 +205,16 @@ export class Cursor {
       pageNo,
       coordinate: { leftTop, leftBottom }
     } = cursorPosition
+    // 当前页面距离滚动容器顶部距离
+    const containerRect = this.container.getBoundingClientRect()
+    const prePageY =
+      pageNo * (this.draw.getHeight() + this.draw.getPageGap()) +
+      containerRect.top
+    const prePageX = containerRect.left
+    // 向上移动时：以顶部距离为准，向下移动时：以底部位置为准
+    const isUp = direction === MoveDirection.UP
+    const x = leftBottom[0] + prePageX
+    const y = isUp ? leftTop[1] + prePageY : leftBottom[1] + prePageY
     // 查找滚动容器，如果是滚动容器是document，则限制范围为当前窗口
     const scrollContainer = findScrollContainer(this.container)
     const rect = {
@@ -225,14 +235,6 @@ export class Cursor {
       rect.top = top
       rect.bottom = bottom
     }
-    // 当前页面距离滚动容器顶部距离
-    const prePageY =
-      pageNo * (this.draw.getHeight() + this.draw.getPageGap()) +
-      this.container.getBoundingClientRect().top
-    // 向上移动时：以顶部距离为准，向下移动时：以底部位置为准
-    const isUp = direction === MoveDirection.UP
-    const x = leftBottom[0] + (isDocumentScroll ? 0 : rect.left)
-    const y = isUp ? leftTop[1] + prePageY : leftBottom[1] + prePageY
     // 可视范围根据参数调整
     const { maskMargin } = this.options
     rect.top += maskMargin[0]
