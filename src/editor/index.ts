@@ -74,6 +74,27 @@ import { IBadge } from './interface/Badge'
 import { WatermarkType, WatermarkLayer } from './dataset/enum/Watermark'
 import { INTERNAL_SHORTCUT_KEY } from './dataset/constant/Shortcut'
 import { IGraffitiData } from './interface/Graffiti'
+import { compileTemplate } from './template'
+import type {
+  ITemplateBlock,
+  ITemplateCondition,
+  ITemplateField,
+  ITemplateFieldRowBlock,
+  ITemplateFieldSegment,
+  ITemplateGroupBlock,
+  ITemplateLayout,
+  ITemplateOption,
+  ITemplateParagraphBlock,
+  ITemplateRule,
+  ITemplateSchema,
+  ITemplateSectionBlock,
+  ITemplateSegment,
+  ITemplateSeparatorBlock,
+  ITemplateTextSegment,
+  TemplateConditionOperator,
+  TemplateFieldType,
+  TemplateRuleType
+} from './template'
 
 export default class Editor {
   public command: Command
@@ -169,7 +190,8 @@ export {
   splitText,
   createDomFromElementList,
   getElementListByHTML,
-  getTextFromElementList
+  getTextFromElementList,
+  compileTemplate
 }
 
 // 对外常量
@@ -238,5 +260,23 @@ export type {
   IRange,
   IRangeStyle,
   IBadge,
-  IGetElementListByHTMLOption
+  IGetElementListByHTMLOption,
+  ITemplateBlock,
+  ITemplateCondition,
+  ITemplateField,
+  ITemplateFieldRowBlock,
+  ITemplateFieldSegment,
+  ITemplateGroupBlock,
+  ITemplateLayout,
+  ITemplateOption,
+  ITemplateParagraphBlock,
+  ITemplateRule,
+  ITemplateSchema,
+  ITemplateSectionBlock,
+  ITemplateSegment,
+  ITemplateSeparatorBlock,
+  ITemplateTextSegment,
+  TemplateConditionOperator,
+  TemplateFieldType,
+  TemplateRuleType
 }

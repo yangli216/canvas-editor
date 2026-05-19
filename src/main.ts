@@ -1,4 +1,4 @@
-import { commentList, data, options } from './mock'
+import { commentList, documentData, options } from './mock'
 import './style.css'
 import prism from 'prismjs'
 import Editor, {
@@ -35,31 +35,7 @@ window.onload = function () {
   const container = document.querySelector<HTMLDivElement>('.editor')!
   const instance = new Editor(
     container,
-    {
-      header: [
-        {
-          value: '第一人民医院',
-          size: 32,
-          rowFlex: RowFlex.CENTER
-        },
-        {
-          value: '\n门诊病历',
-          size: 18,
-          rowFlex: RowFlex.CENTER
-        },
-        {
-          value: '\n',
-          type: ElementType.SEPARATOR
-        }
-      ],
-      main: <IElement[]>data,
-      footer: [
-        {
-          value: 'canvas-editor',
-          size: 12
-        }
-      ]
-    },
+    documentData,
     options
   )
   console.log('实例: ', instance)
