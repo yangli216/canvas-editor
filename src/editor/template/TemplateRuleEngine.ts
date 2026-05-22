@@ -96,12 +96,18 @@ export class TemplateRuleEngine {
   private editor: Editor
   private fieldInfos: FieldInfo[]
   private blockRules: Map<string, ITemplateRule[]>
+  private businessCodeToFieldId: Map<string, string>
   private _handler: () => void
 
   constructor(editor: Editor, schema: ITemplateSchema) {
     this.editor = editor
     this.fieldInfos = collectFieldInfos(schema)
     this.blockRules = collectBlockRules(schema)
+    this.businessCodeToFieldId = new Map(
+      this.fieldInfos
+        .filter(i => i.field.metadata?.businessCode)
+        .map(i => [i.field.metadata!.businessCode!, i.field.id])
+    )
     this._handler = () => this._evaluate()
     this._subscribe()
     setTimeout(this._handler, 0)
@@ -115,7 +121,11 @@ export class TemplateRuleEngine {
     const map = new Map<string, string | null>()
     for (const { field } of this.fieldInfos) {
       const result = this.editor.command.getControlValue({ conceptId: field.id })
-      map.set(field.id, result?.[0]?.value ?? null)
+      const value = result?.[0]?.value ?? null
+      map.set(field.id, value)
+      if (field.metadata?.businessCode) {
+        map.set(field.metadata.businessCode, value)
+      }
     }
     return map
   }
@@ -210,6 +220,10 @@ export class TemplateRuleEngine {
         const { cascade } = rule
         if (!cascade) continue
 
+        const targetFieldId = cascade.targetFieldType === 'businessCode'
+          ? (this.businessCodeToFieldId.get(cascade.targetField) ?? cascade.targetField)
+          : cascade.targetField
+
         if (cascade.optionMap && cascade.optionMap[currentValue] !== undefined) {
           const newOptions = cascade.optionMap[currentValue]
           const valueSets = newOptions.map(opt => ({
@@ -217,16 +231,16 @@ export class TemplateRuleEngine {
             code: opt.code || opt.value || opt.label
           }))
           this.editor.command.executeSetControlPropertiesList([
-            { conceptId: cascade.targetField, properties: { valueSets } }
+            { conceptId: targetFieldId, properties: { valueSets } }
           ])
         }
 
         if (cascade.valueMap && cascade.valueMap[currentValue] !== undefined) {
           const newValue = cascade.valueMap[currentValue]
-          this.editor.command.executeSetControlValue({
-            conceptId: cascade.targetField,
+          this.editor.command.executeSetControlValueList([{
+            conceptId: targetFieldId,
             value: newValue
-          })
+          }])
         }
       }
     }

@@ -2,7 +2,10 @@
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
-    "lib": ["ESNext", "DOM"],
+    "lib": [
+      "ESNext",
+      "DOM"
+    ],
     "moduleResolution": "Bundler",
     "ignoreDeprecations": "5.0",
     "strict": true,
@@ -18,10 +21,15 @@
     "outDir": "dist",
     "rootDir": "",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     }
   },
-  "include": ["./src/", "./tests/"],
+  "include": [
+    "./src/",
+    "./tests/"
+  ],
   "exclude": [
     "node_modules",
     "dist"

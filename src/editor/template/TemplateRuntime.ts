@@ -490,7 +490,9 @@ export class TemplateRuntime {
   getValuesByBusinessCode(): Record<string, string | null> {
     const result: Record<string, string | null> = {}
     this.index.byBusinessCode.forEach((nodes, businessCode) => {
-      result[businessCode] = readControlValue(this.editor, nodes[0].field.id)
+      const node = nodes[0]
+      if (node.tableId) return
+      result[businessCode] = readControlValue(this.editor, node.field.id)
     })
     return result
   }

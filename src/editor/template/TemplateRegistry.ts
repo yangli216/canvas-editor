@@ -101,14 +101,14 @@ class TemplateRegistry {
 
     if (options?.note && existing) {
       versionHistory.push({
-        status: prevStatus,
+        status: 'draft',
         version: existing.schema.version,
         note: options.note,
         timestamp: now
       })
     } else if (wasPublished && !builtIn && existing) {
       versionHistory.push({
-        status: prevStatus,
+        status: 'draft',
         version: existing.schema.version,
         timestamp: now
       })
@@ -240,15 +240,21 @@ class TemplateRegistry {
     if (!record?.schemaSnapshot) return undefined
     const snapshot = JSON.parse(JSON.stringify(record.schemaSnapshot)) as ITemplateSchema
     const now = Date.now()
-    entry.versionHistory.push({
+    this.entries.set(id, {
+      ...entry,
+      schema: snapshot,
       status: 'draft',
-      version: snapshot.version,
-      note: `回滚到版本 ${snapshot.version}`,
-      timestamp: now
+      updatedAt: now,
+      versionHistory: [
+        ...entry.versionHistory,
+        {
+          status: 'draft',
+          version: snapshot.version,
+          note: `回滚到版本 ${snapshot.version}`,
+          timestamp: now
+        }
+      ]
     })
-    entry.schema = snapshot
-    entry.status = 'draft'
-    entry.updatedAt = now
     this._persist()
     return snapshot
   }
