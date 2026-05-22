@@ -4,7 +4,7 @@
     "module": "ESNext",
     "lib": ["ESNext", "DOM"],
     "moduleResolution": "Bundler",
-    "ignoreDeprecations": "6.0",
+    "ignoreDeprecations": "5.0",
     "strict": true,
     "sourceMap": true,
     "resolveJsonModule": true,
@@ -14,13 +14,14 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
+    "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": "",
     "paths": {
       "@/*": ["./src/*"]
     }
   },
-  "include": ["./src/", "./tests/", "./vite.config.ts"],
+  "include": ["./src/", "./tests/"],
   "exclude": [
     "node_modules",
     "dist"

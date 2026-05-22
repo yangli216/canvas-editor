@@ -7,7 +7,6 @@ export const admissionRecordTemplate: ITemplateSchema = {
   name: '入院记录模板',
   description: '用于住院入院记录的结构化模板示例',
   layout: {
-    defaultControlWidth: 120,
     textareaWidth: 420,
     sectionSpacing: 1,
     titleStyle: {

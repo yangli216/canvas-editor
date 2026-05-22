@@ -40,6 +40,8 @@ export class SelectControl implements IControlInstance {
   private options: DeepRequired<IEditorOption>
   private VALUE_DELIMITER = ','
   private DEFAULT_MULTI_SELECT_DELIMITER = ','
+  private POPUP_MIN_WIDTH = 120
+  private POPUP_MAX_WIDTH = 320
 
   constructor(element: IElement, control: Control) {
     const draw = control.getDraw()
@@ -496,6 +498,7 @@ export class SelectControl implements IControlInstance {
     for (let v = 0; v < valueSets.length; v++) {
       const valueSet = valueSets[v]
       const li = document.createElement('li')
+      li.title = valueSet.value
       let codes = this.getCodes()
       if (codes.includes(valueSet.code)) {
         li.classList.add('active')
@@ -527,9 +530,16 @@ export class SelectControl implements IControlInstance {
       coordinate: {
         leftTop: [left, top]
       },
-      lineHeight
+      lineHeight,
+      metrics
     } = position
     const preY = this.control.getPreY()
+    const popupMinWidth = Math.min(
+      Math.max(metrics.width + 28, this.POPUP_MIN_WIDTH),
+      this.POPUP_MAX_WIDTH
+    )
+    selectPopupContainer.style.minWidth = `${popupMinWidth}px`
+    selectPopupContainer.style.maxWidth = `${this.POPUP_MAX_WIDTH}px`
     selectPopupContainer.style.left = `${left}px`
     selectPopupContainer.style.top = `${top + preY + lineHeight}px`
     // 追加至container

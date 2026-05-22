@@ -26,7 +26,7 @@ export class SeparatorParticle {
     if (element.dashArray?.length) {
       ctx.setLineDash(element.dashArray)
     }
-    const offsetY = Math.round(y) // 四舍五入避免绘制模糊
+    const offsetY = Math.round(y + ((element.offsetY || 0) * scale)) // 四舍五入避免绘制模糊
     ctx.translate(0, ctx.lineWidth / 2)
     ctx.beginPath()
     ctx.moveTo(x, offsetY)

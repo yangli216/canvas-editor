@@ -74,11 +74,62 @@ import { IBadge } from './interface/Badge'
 import { WatermarkType, WatermarkLayer } from './dataset/enum/Watermark'
 import { INTERNAL_SHORTCUT_KEY } from './dataset/constant/Shortcut'
 import { IGraffitiData } from './interface/Graffiti'
-import { compileTemplate } from './template'
+import {
+  compileTemplate,
+  DEFAULT_SEPARATOR_OFFSET_Y,
+  getTemplatePageNumberOptions,
+  TEMPLATE_SYSTEM_VARIABLES
+} from './template'
+import {
+  analyzeTemplateDocumentMigration,
+  TemplateDocumentStore
+} from './template/TemplateDocumentStore'
+import type {
+  ITemplateDocumentContent,
+  ITemplateDocumentMigrationFieldIssue,
+  ITemplateDocumentMigrationMapping,
+  ITemplateDocumentMigrationPlan,
+  ITemplateDocumentMigrationRecord,
+  ITemplateDocumentMigrationResult,
+  ITemplateDocumentRecord,
+  ITemplateDocumentTemplateBinding,
+  TemplateDocumentMigrationMatchMode,
+  TemplateDocumentStatus
+} from './template/TemplateDocumentStore'
+import {
+  buildTemplateFieldRuntimeIndex,
+  createTemplateRuntime,
+  TemplateRuntime
+} from './template/TemplateRuntime'
+import type {
+  ITemplateFieldSelector,
+  ITemplateRuntimeWriteResult,
+  ITemplateRuntimeAdapterApplyOptions,
+  ITemplateRuntimeAdapterApplyResult,
+  ITemplateStructuredExtractResult
+} from './template/TemplateRuntime'
+import {
+  createMockHisAdapter,
+  templateDataAdapterRegistry,
+  TemplateDataAdapterRegistry,
+  MOCK_HIS_DATA_SOURCES
+} from './template/TemplateDataAdapter'
+import type {
+  ITemplateDataAdapter,
+  ITemplateDataAdapterContext,
+  ITemplateDataAdapterFieldResolution,
+  ITemplateDataAdapterRequest,
+  ITemplateDataAdapterRequestField,
+  ITemplateDataAdapterResolution,
+  ICreateMockHisAdapterOptions,
+  IMockHisPatient
+} from './template/TemplateDataAdapter'
 import type {
   ITemplateBlock,
   ITemplateCondition,
+  TemplateConditionFieldSource,
   ITemplateField,
+  ITemplateFieldMetadata,
   ITemplateFieldRowBlock,
   ITemplateFieldSegment,
   ITemplateGroupBlock,
@@ -191,7 +242,19 @@ export {
   createDomFromElementList,
   getElementListByHTML,
   getTextFromElementList,
-  compileTemplate
+  compileTemplate,
+  DEFAULT_SEPARATOR_OFFSET_Y,
+  getTemplatePageNumberOptions,
+  TEMPLATE_SYSTEM_VARIABLES,
+  analyzeTemplateDocumentMigration,
+  TemplateDocumentStore,
+  buildTemplateFieldRuntimeIndex,
+  createTemplateRuntime,
+  TemplateRuntime,
+  createMockHisAdapter,
+  templateDataAdapterRegistry,
+  TemplateDataAdapterRegistry,
+  MOCK_HIS_DATA_SOURCES
 }
 
 // 对外常量
@@ -263,7 +326,9 @@ export type {
   IGetElementListByHTMLOption,
   ITemplateBlock,
   ITemplateCondition,
+  TemplateConditionFieldSource,
   ITemplateField,
+  ITemplateFieldMetadata,
   ITemplateFieldRowBlock,
   ITemplateFieldSegment,
   ITemplateGroupBlock,
@@ -276,6 +341,29 @@ export type {
   ITemplateSegment,
   ITemplateSeparatorBlock,
   ITemplateTextSegment,
+  ITemplateDocumentContent,
+  ITemplateDocumentMigrationFieldIssue,
+  ITemplateDocumentMigrationMapping,
+  ITemplateDocumentMigrationPlan,
+  ITemplateDocumentMigrationRecord,
+  ITemplateDocumentMigrationResult,
+  ITemplateDocumentRecord,
+  ITemplateDocumentTemplateBinding,
+  ITemplateFieldSelector,
+  ITemplateRuntimeWriteResult,
+  ITemplateRuntimeAdapterApplyOptions,
+  ITemplateRuntimeAdapterApplyResult,
+  ITemplateStructuredExtractResult,
+  ITemplateDataAdapter,
+  ITemplateDataAdapterContext,
+  ITemplateDataAdapterFieldResolution,
+  ITemplateDataAdapterRequest,
+  ITemplateDataAdapterRequestField,
+  ITemplateDataAdapterResolution,
+  ICreateMockHisAdapterOptions,
+  IMockHisPatient,
+  TemplateDocumentMigrationMatchMode,
+  TemplateDocumentStatus,
   TemplateConditionOperator,
   TemplateFieldType,
   TemplateRuleType

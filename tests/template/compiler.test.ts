@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   compileTemplate,
   ControlType,
+  DEFAULT_SEPARATOR_OFFSET_Y,
   ElementType,
+  getTemplatePageNumberOptions,
   TitleLevel,
+  TEMPLATE_SYSTEM_VARIABLES,
   type ITemplateSchema
 } from '@/editor'
 
@@ -98,6 +101,8 @@ describe('template compiler', () => {
 
     expect(nameControl?.control?.type).toBe(ControlType.TEXT)
     expect(nameControl?.control?.deletable).toBe(false)
+    expect(nameControl?.control?.minWidth).toBeUndefined()
+    expect(nameControl?.control?.underline).toBe(false)
     expect(nameControl?.extension).toMatchObject({
       template: {
         schemaId: 'test-template',
@@ -116,6 +121,7 @@ describe('template compiler', () => {
     )
 
     expect(genderControl?.control?.type).toBe(ControlType.SELECT)
+    expect(genderControl?.control?.minWidth).toBe(56)
     expect(genderControl?.control?.valueSets).toEqual([
       {
         value: '男',
@@ -126,6 +132,120 @@ describe('template compiler', () => {
         code: '女'
       }
     ])
+  })
+
+  it('字段宽度留空时按内容自适应，枚举字段会按选项文本估算初始最小宽度', () => {
+    const result = compileTemplate({
+      ...schema,
+      blocks: [
+        {
+          type: 'fieldRow',
+          fields: [
+            {
+              id: 'adaptiveSelect',
+              type: 'select',
+              label: '自适应下拉',
+              options: [{ label: '短值' }, { label: '较长的选项文本' }]
+            },
+            {
+              id: 'adaptiveText',
+              type: 'text',
+              label: '自适应文本'
+            },
+            {
+              id: 'adaptiveRadio',
+              type: 'radio',
+              label: '自适应单选',
+              options: [{ label: '是' }, { label: '需要进一步人工确认' }]
+            },
+            {
+              id: 'sizedSelect',
+              type: 'select',
+              label: '字号前后缀联动下拉',
+              prefix: '左',
+              postfix: '右',
+              style: { size: 18 },
+              options: [{ label: '较长的选项文本' }]
+            },
+            {
+              id: 'fixedSelect',
+              type: 'select',
+              label: '固定下拉',
+              width: 180,
+              options: [{ label: 'A' }, { label: 'B' }]
+            }
+          ]
+        }
+      ]
+    })
+    const adaptiveSelect = result.main.find(
+      element =>
+        element.type === ElementType.CONTROL &&
+        element.control?.conceptId === 'adaptiveSelect'
+    )
+    const adaptiveText = result.main.find(
+      element =>
+        element.type === ElementType.CONTROL &&
+        element.control?.conceptId === 'adaptiveText'
+    )
+    const adaptiveRadio = result.main.find(
+      element =>
+        element.type === ElementType.CONTROL &&
+        element.control?.conceptId === 'adaptiveRadio'
+    )
+    const sizedSelect = result.main.find(
+      element =>
+        element.type === ElementType.CONTROL &&
+        element.control?.conceptId === 'sizedSelect'
+    )
+    const fixedSelect = result.main.find(
+      element =>
+        element.type === ElementType.CONTROL &&
+        element.control?.conceptId === 'fixedSelect'
+    )
+
+    expect(adaptiveSelect?.control?.minWidth).toBe(138)
+    expect(adaptiveText?.control?.minWidth).toBeUndefined()
+    expect(adaptiveRadio?.control?.minWidth).toBe(154)
+    expect(sizedSelect?.control?.minWidth).toBe(202)
+    expect(fixedSelect?.control?.minWidth).toBe(180)
+  })
+
+  it('字段下划线仅在显式配置时启用，默认不启用', () => {
+    const result = compileTemplate({
+      ...schema,
+      blocks: [
+        {
+          type: 'fieldRow',
+          fields: [
+            {
+              id: 'plainText',
+              type: 'text',
+              label: '普通输入'
+            },
+            {
+              id: 'underlinedText',
+              type: 'text',
+              label: '带下划线输入',
+              underline: true
+            }
+          ]
+        }
+      ]
+    })
+    const plainText = result.main.find(
+      element =>
+        element.type === ElementType.CONTROL &&
+        element.control?.conceptId === 'plainText'
+    )
+    const underlinedText = result.main.find(
+      element =>
+        element.type === ElementType.CONTROL &&
+        element.control?.conceptId === 'underlinedText'
+    )
+
+    expect(plainText?.control?.underline).toBe(false)
+    expect(underlinedText?.control?.underline).toBe(true)
   })
 
   it('section 会编译为标题元素，并把规则写进 extension.template', () => {
@@ -155,6 +275,99 @@ describe('template compiler', () => {
           }
         ]
       }
+    })
+  })
+
+  it('分节标题后换行默认开启，也可按配置关闭', () => {
+    const withBreak = compileTemplate({
+      ...schema,
+      blocks: [
+        {
+          type: 'section',
+          title: '默认换行分节',
+          blocks: [{ type: 'paragraph', segments: [{ type: 'text', value: '内容A' }] }]
+        }
+      ]
+    })
+    const withoutBreak = compileTemplate({
+      ...schema,
+      blocks: [
+        {
+          type: 'section',
+          title: '同行分节',
+          titleLineBreak: false,
+          blocks: [{ type: 'paragraph', segments: [{ type: 'text', value: '内容B' }], lineBreak: false }]
+        }
+      ]
+    })
+
+    const breakTitleIndex = withBreak.main.findIndex(element => element.type === ElementType.TITLE)
+    const noBreakTitleIndex = withoutBreak.main.findIndex(element => element.type === ElementType.TITLE)
+
+    expect(withBreak.main[breakTitleIndex + 1]?.value).toBe('\n')
+    expect(withoutBreak.main[noBreakTitleIndex + 1]?.value).toBe('内容B')
+  })
+
+  it('分割线在未显式配置时使用默认上移偏移量', () => {
+    const result = compileTemplate({
+      ...schema,
+      blocks: [
+        {
+          type: 'separator',
+          align: 'center',
+          width: 520,
+          spacing: 8
+        }
+      ]
+    })
+    const separator = result.main.find(element => element.type === ElementType.SEPARATOR)
+
+    expect(separator?.offsetY).toBe(DEFAULT_SEPARATOR_OFFSET_Y)
+  })
+
+  it('静态文本与段落支持打印时间和操作者变量', () => {
+    const runtimeSchema: ITemplateSchema = {
+      ...schema,
+      footer: [
+        {
+          type: 'staticText',
+          text: `打印时间：${TEMPLATE_SYSTEM_VARIABLES.PRINT_TIME}`
+        },
+        {
+          type: 'paragraph',
+          segments: [{ type: 'text', value: `操作者：${TEMPLATE_SYSTEM_VARIABLES.OPERATOR_NAME}` }]
+        }
+      ]
+    }
+
+    const result = compileTemplate(runtimeSchema, {
+      runtime: {
+        printTime: '2026-05-21 15:30',
+        operatorName: '张医生'
+      }
+    })
+
+    expect(result.footer?.some(element => element.value === '打印时间：2026-05-21 15:30')).toBe(true)
+    expect(result.footer?.some(element => element.value === '操作者：张医生')).toBe(true)
+  })
+
+  it('可从 layout 提取页码运行态配置', () => {
+    const pageNumber = getTemplatePageNumberOptions({
+      ...schema,
+      layout: {
+        footerRuntime: {
+          enabledPageNumber: true,
+          pageNumberFormat: `第 ${TEMPLATE_SYSTEM_VARIABLES.PAGE_NO} / ${TEMPLATE_SYSTEM_VARIABLES.PAGE_COUNT} 页`,
+          pageNumberAlign: 'right',
+          pageNumberBottom: 72
+        }
+      }
+    })
+
+    expect(pageNumber).toMatchObject({
+      disabled: false,
+      bottom: 72,
+      format: '第 {pageNo} / {pageCount} 页'
     })
   })
 })

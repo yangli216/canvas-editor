@@ -26,8 +26,14 @@ import { Dialog } from './components/dialog/Dialog'
 import { formatPrismToken } from './utils/prism'
 import { Signature } from './components/signature/Signature'
 import { debounce, nextTick, scrollIntoView } from './utils'
+import { TemplateManager } from './components/template-designer/TemplateManager'
+import { registerBuiltInTemplates } from './editor/template/examples/index'
+import { compileTemplate } from './editor/template/index'
 
 window.onload = function () {
+  // 注册内置模板
+  registerBuiltInTemplates()
+
   const isApple =
     typeof navigator !== 'undefined' && /Mac OS X/.test(navigator.userAgent)
 
@@ -61,6 +67,16 @@ window.onload = function () {
     console.log('save')
     const content = instance.command.getValue()
     console.log(content)
+  }
+
+  const templateManagerBtn = document.querySelector<HTMLButtonElement>('.btn-template-manager')!
+  templateManagerBtn.onclick = function () {
+    new TemplateManager({
+      onApply: schema => {
+        const data = compileTemplate(schema)
+        instance.command.executeSetValue(data)
+      }
+    })
   }
   // 2. | 撤销 | 重做 | 格式刷 | 清除格式 |
   const undoDom = document.querySelector<HTMLDivElement>('.menu-item__undo')!

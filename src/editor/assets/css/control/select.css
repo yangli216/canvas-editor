@@ -1,6 +1,6 @@
 .ce-select-control-popup {
-  max-width: 160px;
-  min-width: 69px;
+  max-width: 320px;
+  min-width: 120px;
   max-height: 225px;
   position: absolute;
   z-index: 1;
@@ -22,14 +22,18 @@
 
 .ce-select-control-popup ul li {
   font-size: 13px;
-  padding: 0 20px;
+  padding: 8px 20px;
   position: relative;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
   overflow: hidden;
   text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   color: #666;
-  height: 36px;
-  line-height: 36px;
+  min-height: 36px;
+  line-height: 18px;
   box-sizing: border-box;
   cursor: pointer;
 }

@@ -1077,3 +1077,29 @@ ul {
 .ce-contextmenu-word-tool {
   background-image: url('./assets/images/word-tool.svg');
 }
+.btn-save,
+.btn-template-manager {
+  padding: 4px 12px;
+  border: 1px solid #d8dde6;
+  border-radius: 3px;
+  background: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  color: #333;
+  transition: background 0.12s;
+}
+
+.btn-save:hover,
+.btn-template-manager:hover {
+  background: #f0f2f5;
+}
+
+.btn-template-manager {
+  background: #4285f4;
+  color: #fff;
+  border-color: #4285f4;
+}
+
+.btn-template-manager:hover {
+  background: #3275e4;
+}
