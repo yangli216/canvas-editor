@@ -106,6 +106,10 @@ import type {
   ITemplateRuntimeWriteResult,
   ITemplateRuntimeAdapterApplyOptions,
   ITemplateRuntimeAdapterApplyResult,
+  ITemplateRuntimeInspectOptions,
+  ITemplateRuntimeDataSourceSummary,
+  ITemplateRuntimeDataBindingIssue,
+  ITemplateRuntimeDataBindingInspection,
   ITemplateStructuredExtractResult
 } from './template/TemplateRuntime'
 import {
@@ -353,6 +357,10 @@ export type {
   ITemplateRuntimeWriteResult,
   ITemplateRuntimeAdapterApplyOptions,
   ITemplateRuntimeAdapterApplyResult,
+  ITemplateRuntimeInspectOptions,
+  ITemplateRuntimeDataSourceSummary,
+  ITemplateRuntimeDataBindingIssue,
+  ITemplateRuntimeDataBindingInspection,
   ITemplateStructuredExtractResult,
   ITemplateDataAdapter,
   ITemplateDataAdapterContext,

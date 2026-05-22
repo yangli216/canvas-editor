@@ -8,6 +8,17 @@ import type {
   ITemplateStaticTextBlock,
   ITemplateField
 } from '../../editor/template/index'
+import {
+  canNestBlock,
+  filterNestableBlocks,
+  getAllowedNestedBlockTypes
+} from './nesting'
+import {
+  getActivePaletteDragPayload,
+  PALETTE_DRAG_MIME,
+  type PaletteDragPayload
+} from './paletteDragState'
+import { TemplateFeedback } from './TemplateFeedback'
 
 type BlockWithRules = ITemplateSectionBlock | ITemplateGroupBlock
 
@@ -22,12 +33,20 @@ export interface ISchemaCanvasOptions {
   onMoveUp: (blockIndex: number) => void
   onMoveDown: (blockIndex: number) => void
   onReorder?: (blocks: ITemplateBlock[]) => void
+  onInsertAt?: (index: number, blocks: ITemplateBlock[]) => void
   onCopy?: (blockIndex: number, cloned: ITemplateBlock) => void
   onNestedInsert?: (parentIndex: number, block: ITemplateBlock) => void
+  onNestedInsertAt?: (
+    parentIndex: number,
+    childIndex: number,
+    blocks: ITemplateBlock[]
+  ) => void
   onNestedDelete?: (parentIndex: number, childIndex: number) => void
   onNestedMoveUp?: (parentIndex: number, childIndex: number) => void
   onNestedMoveDown?: (parentIndex: number, childIndex: number) => void
   onNestedReorder?: (parentIndex: number, blocks: ITemplateBlock[]) => void
+  onFieldRowReorder?: (blockIndex: number, fields: ITemplateField[]) => void
+  onFieldRowDelete?: (blockIndex: number, fieldId: string) => void
 }
 
 const BLOCK_LABEL: Record<ITemplateBlock['type'], string> = {
@@ -98,6 +117,26 @@ function getFieldsFromBlock(block: ITemplateBlock): ITemplateField[] {
   return [] // staticText, separator, section, group
 }
 
+function parsePaletteDragPayload(
+  dataTransfer: DataTransfer | null
+): PaletteDragPayload | null {
+  const raw = dataTransfer?.getData(PALETTE_DRAG_MIME)
+  if (!raw) return null
+  try {
+    const payload = JSON.parse(raw) as PaletteDragPayload
+    if (payload.kind === 'type' && payload.type) return payload
+    if (payload.kind === 'blocks' && Array.isArray(payload.blocks)) return payload
+  } catch {
+    return null
+  }
+  return null
+}
+
+function hasPaletteDragPayload(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false
+  return Array.from(dataTransfer.types).includes(PALETTE_DRAG_MIME)
+}
+
 export class SchemaCanvas {
   private container: HTMLDivElement
   private blocks: ITemplateBlock[] = []
@@ -105,6 +144,7 @@ export class SchemaCanvas {
   private options: ISchemaCanvasOptions
   private expandedBlocks = new Set<number>()
   private dragFromIndex: number | null = null
+  private lastInvalidDragHint: { message: string; at: number } | null = null
 
   constructor(options: ISchemaCanvasOptions) {
     this.options = options
@@ -117,6 +157,21 @@ export class SchemaCanvas {
     this._render()
   }
 
+  setSelection(selection: SelectionTarget) {
+    this.selection = selection
+    if (selection) {
+      if (selection.parentIndex != null) {
+        this.expandedBlocks.add(selection.parentIndex)
+      }
+      const selectedBlock = this._getSelectedBlock(selection)
+      if (selectedBlock?.type === 'section' || selectedBlock?.type === 'group') {
+        this.expandedBlocks.add(selection.parentIndex ?? selection.blockIndex)
+      }
+    }
+    this._render()
+    this._revealSelection()
+  }
+
   getBlocks(): ITemplateBlock[] {
     return this.blocks
   }
@@ -126,6 +181,21 @@ export class SchemaCanvas {
     this.blocks.push(block)
     this._render()
     this._selectBlock(this.blocks.length - 1)
+  }
+
+  private _getAllowedNestedTypes(parentIndex: number): Array<ITemplateBlock['type']> {
+    const parent = this.blocks[parentIndex]
+    if (parent?.type !== 'section' && parent?.type !== 'group') return []
+    return getAllowedNestedBlockTypes(parent)
+  }
+
+  private _filterNestedInsertBlocks(
+    parentIndex: number,
+    blocks: ITemplateBlock[]
+  ): ITemplateBlock[] {
+    const parent = this.blocks[parentIndex]
+    if (parent?.type !== 'section' && parent?.type !== 'group') return []
+    return filterNestableBlocks(parent, blocks)
   }
 
   createDefaultBlock(type: ITemplateBlock['type']): ITemplateBlock {
@@ -177,14 +247,23 @@ export class SchemaCanvas {
     }
   }
 
-  private _selectBlock(blockIndex: number) {
-    this.selection = { kind: 'block', blockIndex }
+  private _selectBlock(blockIndex: number, parentIndex?: number) {
+    this.selection = {
+      kind: 'block',
+      blockIndex,
+      ...(parentIndex != null ? { parentIndex } : {})
+    }
     this._render()
     this.options.onSelect(this.selection)
   }
 
-  private _selectField(blockIndex: number, fieldId: string) {
-    this.selection = { kind: 'field', blockIndex, fieldId }
+  private _selectField(blockIndex: number, fieldId: string, parentIndex?: number) {
+    this.selection = {
+      kind: 'field',
+      blockIndex,
+      fieldId,
+      ...(parentIndex != null ? { parentIndex } : {})
+    }
     this._render()
     this.options.onSelect(this.selection)
   }
@@ -195,19 +274,189 @@ export class SchemaCanvas {
 
     if (this.blocks.length === 0) {
       const empty = document.createElement('div')
-      empty.className = 'td-canvas__empty'
+      empty.className = 'td-canvas__empty td-canvas__drop-target'
       empty.textContent = '从左侧拖入块类型，或点击添加'
+      empty.addEventListener('dragover', event => {
+        if (!hasPaletteDragPayload(event.dataTransfer)) return
+        event.preventDefault()
+        empty.classList.add('td-canvas__drop-target--active')
+      })
+      empty.addEventListener('dragleave', () => {
+        empty.classList.remove('td-canvas__drop-target--active')
+      })
+      empty.addEventListener('drop', event => {
+        const payload = parsePaletteDragPayload(event.dataTransfer)
+        empty.classList.remove('td-canvas__drop-target--active')
+        if (!payload) return
+        event.preventDefault()
+        const blocks = this._createBlocksFromPayload(payload)
+        if (!blocks.length) return
+        this.options.onInsertAt?.(0, blocks)
+      })
       this.container.append(empty)
       this.container.scrollTop = scrollTop
       return
     }
 
     this.blocks.forEach((block, index) => {
+      this.container.append(this._createDropSlot(index))
       const card = this._renderBlockCard(block, index)
       this.container.append(card)
     })
+    this.container.append(this._createDropSlot(this.blocks.length, true))
 
     this.container.scrollTop = scrollTop
+  }
+
+  private _getSelectedBlock(selection: Exclude<SelectionTarget, null>) {
+    if (selection.parentIndex != null) {
+      const parent = this.blocks[selection.parentIndex]
+      if (parent?.type === 'section' || parent?.type === 'group') {
+        return parent.blocks[selection.blockIndex]
+      }
+      return undefined
+    }
+    return this.blocks[selection.blockIndex]
+  }
+
+  private _revealSelection() {
+    const selection = this.selection
+    if (!selection) return
+    requestAnimationFrame(() => {
+      const selector = selection.parentIndex != null
+        ? `.td-canvas__nested-block[data-parent-index="${selection.parentIndex}"][data-child-index="${selection.blockIndex}"]`
+        : `.td-canvas__block[data-block-index="${selection.blockIndex}"]`
+      const target = this.container.querySelector(selector) as HTMLElement | null
+      target?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
+    })
+  }
+
+  private _createBlocksFromPayload(payload: PaletteDragPayload): ITemplateBlock[] {
+    if (payload.kind === 'type') {
+      return [this.createDefaultBlock(payload.type)]
+    }
+    return payload.blocks.map(block => deepCloneBlock(block))
+  }
+
+  private _clearDragOver(container: ParentNode = this.container) {
+    container.querySelectorAll('.td-canvas__drop-slot--active').forEach(element =>
+      element.classList.remove('td-canvas__drop-slot--active')
+    )
+    container.querySelectorAll('.td-canvas__drop-target--active').forEach(element =>
+      element.classList.remove('td-canvas__drop-target--active')
+    )
+    container.querySelectorAll('.td-canvas__block--drop-before').forEach(element =>
+      element.classList.remove('td-canvas__block--drop-before')
+    )
+    container.querySelectorAll('.td-canvas__block--drop-after').forEach(element =>
+      element.classList.remove('td-canvas__block--drop-after')
+    )
+    container.querySelectorAll('.td-canvas__field-chip--drop-before').forEach(element =>
+      element.classList.remove('td-canvas__field-chip--drop-before')
+    )
+    container.querySelectorAll('.td-canvas__field-chip--drop-after').forEach(element =>
+      element.classList.remove('td-canvas__field-chip--drop-after')
+    )
+    container.querySelectorAll('.td-canvas__drop-target--invalid').forEach(element => {
+      element.classList.remove('td-canvas__drop-target--invalid')
+      delete (element as HTMLElement).dataset.invalidMessage
+    })
+    container.querySelectorAll('.td-canvas__drop-slot--invalid').forEach(element => {
+      element.classList.remove('td-canvas__drop-slot--invalid')
+      delete (element as HTMLElement).dataset.invalidMessage
+    })
+    container.querySelectorAll('.td-canvas__nested-block--invalid').forEach(element => {
+      element.classList.remove('td-canvas__nested-block--invalid')
+      delete (element as HTMLElement).dataset.invalidMessage
+    })
+  }
+
+  private _getPaletteDragTypes(): ITemplateBlock['type'][] {
+    const payload = getActivePaletteDragPayload()
+    if (!payload) return []
+    return payload.kind === 'type'
+      ? [payload.type]
+      : payload.blocks.map(block => block.type)
+  }
+
+  private _getInvalidNestedDropMessage(parentIndex: number): string | null {
+    const parent = this.blocks[parentIndex]
+    if (parent?.type !== 'section' && parent?.type !== 'group') return null
+    const invalidTypes = [...new Set(this._getPaletteDragTypes().filter(type => !canNestBlock(parent, type)))]
+    if (!invalidTypes.length) return null
+    const parentLabel = parent.type === 'group' ? '组合' : '分节'
+    return `${parentLabel}内不支持嵌套 ${invalidTypes.map(type => BLOCK_LABEL[type]).join('、')}`
+  }
+
+  private _markInvalidNestedTarget(
+    target: HTMLElement,
+    className: string,
+    message: string
+  ) {
+    target.classList.add(className)
+    target.dataset.invalidMessage = message
+    this._notifyInvalidDragHint(message)
+  }
+
+  private _notifyInvalidDragHint(message: string) {
+    const now = Date.now()
+    if (
+      this.lastInvalidDragHint?.message === message &&
+      now - this.lastInvalidDragHint.at < 1200
+    ) {
+      return
+    }
+    this.lastInvalidDragHint = { message, at: now }
+    TemplateFeedback.toast(message, 'warning')
+  }
+
+  private _getDropPlacement(target: HTMLElement, clientValue: number, axis: 'x' | 'y') {
+    const rect = target.getBoundingClientRect()
+    return axis === 'x'
+      ? clientValue >= rect.left + rect.width / 2 ? 'after' : 'before'
+      : clientValue >= rect.top + rect.height / 2 ? 'after' : 'before'
+  }
+
+  private _createDropSlot(index: number, isEnd = false): HTMLDivElement {
+    const slot = document.createElement('div')
+    slot.className = `td-canvas__drop-slot${isEnd ? ' td-canvas__drop-slot--end' : ''}`
+    slot.title = isEnd ? '拖到这里追加到末尾' : `拖到这里插入到第 ${index + 1} 位前`
+
+    slot.addEventListener('dragover', event => {
+      const hasPalettePayload = hasPaletteDragPayload(event.dataTransfer)
+      if (this.dragFromIndex === null && !hasPalettePayload) return
+      event.preventDefault()
+      this._clearDragOver()
+      slot.classList.add('td-canvas__drop-slot--active')
+    })
+
+    slot.addEventListener('dragleave', () => {
+      slot.classList.remove('td-canvas__drop-slot--active')
+    })
+
+    slot.addEventListener('drop', event => {
+      const payload = parsePaletteDragPayload(event.dataTransfer)
+      const sourceIndex = this.dragFromIndex
+      this._clearDragOver()
+      if (sourceIndex == null && !payload) return
+      event.preventDefault()
+
+      if (sourceIndex != null) {
+        const blocks = [...this.blocks]
+        const [moved] = blocks.splice(sourceIndex, 1)
+        const targetIndex = index > sourceIndex ? index - 1 : index
+        blocks.splice(targetIndex, 0, moved)
+        this.options.onReorder?.(blocks)
+        return
+      }
+
+      if (!payload) return
+      const blocks = this._createBlocksFromPayload(payload)
+      if (!blocks.length) return
+      this.options.onInsertAt?.(index, blocks)
+    })
+
+    return slot
   }
 
   private _renderBlockCard(block: ITemplateBlock, index: number): HTMLDivElement {
@@ -224,6 +473,52 @@ export class SchemaCanvas {
       this._selectBlock(index)
     })
 
+    card.addEventListener('dragover', event => {
+      const hasPalettePayload = hasPaletteDragPayload(event.dataTransfer)
+      if (this.dragFromIndex === null && !hasPalettePayload) return
+      event.preventDefault()
+      this._clearDragOver()
+      const placement = this._getDropPlacement(card, event.clientY, 'y')
+      card.classList.add(
+        placement === 'after'
+          ? 'td-canvas__block--drop-after'
+          : 'td-canvas__block--drop-before'
+      )
+    })
+
+    card.addEventListener('dragleave', event => {
+      if (!card.contains(event.relatedTarget as Node)) {
+        card.classList.remove('td-canvas__block--drop-before')
+        card.classList.remove('td-canvas__block--drop-after')
+      }
+    })
+
+    card.addEventListener('drop', event => {
+      const payload = parsePaletteDragPayload(event.dataTransfer)
+      const sourceIndex = this.dragFromIndex
+      if (sourceIndex == null && !payload) return
+      event.preventDefault()
+      event.stopPropagation()
+
+      const placement = this._getDropPlacement(card, event.clientY, 'y')
+      this._clearDragOver()
+      let targetIndex = index + (placement === 'after' ? 1 : 0)
+
+      if (sourceIndex != null) {
+        const blocks = [...this.blocks]
+        const [moved] = blocks.splice(sourceIndex, 1)
+        if (targetIndex > sourceIndex) targetIndex -= 1
+        blocks.splice(targetIndex, 0, moved)
+        this.options.onReorder?.(blocks)
+        return
+      }
+
+      if (!payload) return
+      const blocks = this._createBlocksFromPayload(payload)
+      if (!blocks.length) return
+      this.options.onInsertAt?.(targetIndex, blocks)
+    })
+
     // Drag events
     card.addEventListener('dragstart', e => {
       this.dragFromIndex = index
@@ -233,26 +528,7 @@ export class SchemaCanvas {
     card.addEventListener('dragend', () => {
       this.dragFromIndex = null
       card.classList.remove('td-canvas__block--dragging')
-      this.container.querySelectorAll('.td-canvas__block--drag-over').forEach(el =>
-        el.classList.remove('td-canvas__block--drag-over')
-      )
-    })
-    card.addEventListener('dragover', e => {
-      e.preventDefault()
-      if (this.dragFromIndex === index) return
-      card.classList.add('td-canvas__block--drag-over')
-    })
-    card.addEventListener('dragleave', () => {
-      card.classList.remove('td-canvas__block--drag-over')
-    })
-    card.addEventListener('drop', e => {
-      e.preventDefault()
-      card.classList.remove('td-canvas__block--drag-over')
-      if (this.dragFromIndex === null || this.dragFromIndex === index) return
-      const blocks = [...this.blocks]
-      const [moved] = blocks.splice(this.dragFromIndex, 1)
-      blocks.splice(index, 0, moved)
-      this.options.onReorder?.(blocks)
+      this._clearDragOver()
     })
 
     const header = document.createElement('div')
@@ -276,6 +552,13 @@ export class SchemaCanvas {
         alignTag.textContent = secAlign === 'center' ? '居中' : '右对齐'
         header.append(alignTag)
       }
+    }
+
+    if (block.type === 'group') {
+      const directionTag = document.createElement('span')
+      directionTag.className = `td-canvas__group-direction td-canvas__group-direction--${block.direction || 'column'}`
+      directionTag.textContent = block.direction === 'row' ? '横向编排' : '纵向堆叠'
+      header.append(directionTag)
     }
 
     // Rule indicator badge on block header (field-level)
@@ -350,11 +633,15 @@ export class SchemaCanvas {
 
   private _renderBlockBody(
     block: ITemplateBlock,
-    blockIndex: number
+    blockIndex: number,
+    parentIndex?: number
   ): HTMLDivElement | null {
     if (block.type === 'fieldRow') {
       const fr = block as ITemplateFieldRowBlock
-      const body = this._renderFieldChips(fr.fields, blockIndex)
+      const body = this._renderFieldChips(fr.fields, blockIndex, {
+        editable: true,
+        parentIndex
+      })
       if (fr.align || fr.equalWidth) {
         const bar = document.createElement('div')
         bar.className = 'td-canvas__layout-bar'
@@ -381,7 +668,7 @@ export class SchemaCanvas {
       if (fieldSegs.length === 0 && !para.align) return null
       const fields = fieldSegs.map(s => (s as { type: 'field'; field: ITemplateField }).field)
       const body = fields.length > 0
-        ? this._renderFieldChips(fields, blockIndex)
+        ? this._renderFieldChips(fields, blockIndex, { parentIndex })
         : document.createElement('div') as HTMLDivElement
       if (para.align && para.align !== 'left') {
         const bar = document.createElement('div')
@@ -396,7 +683,7 @@ export class SchemaCanvas {
       return body
     }
     if (block.type === 'table') {
-      return this._renderTablePreview(block as ITemplateTableBlock, blockIndex)
+      return this._renderTablePreview(block as ITemplateTableBlock, blockIndex, parentIndex)
     }
     if (block.type === 'staticText') {
       return this._renderStaticTextPreview(block as ITemplateStaticTextBlock)
@@ -405,8 +692,13 @@ export class SchemaCanvas {
       const isExpanded = this.expandedBlocks.has(blockIndex)
       const nestedBlock = block as ITemplateSectionBlock | ITemplateGroupBlock
       if (isExpanded) {
-        const isRowGroup = block.type === 'group' && (block as ITemplateGroupBlock).direction === 'row'
-        return this._renderNestedBlocks(nestedBlock.blocks, blockIndex, isRowGroup)
+        return this._renderNestedBlocks(
+          nestedBlock.blocks,
+          blockIndex,
+          block.type === 'group'
+            ? (block as ITemplateGroupBlock).direction || 'column'
+            : null
+        )
       }
       const body = document.createElement('div')
       body.className = 'td-canvas__block-body td-canvas__block-nested'
@@ -417,6 +709,7 @@ export class SchemaCanvas {
         const dir = (block as ITemplateGroupBlock).direction || 'column'
         const dirIcon = dir === 'row' ? '⊟' : '≡'
         info.textContent = `${dirIcon} ${count} 个子块 (${dir})`
+        body.classList.add(`td-canvas__block-nested--${dir}`)
       } else {
         info.textContent = `${count} 个子块`
       }
@@ -439,7 +732,11 @@ export class SchemaCanvas {
     return body
   }
 
-  private _renderTablePreview(block: ITemplateTableBlock, blockIndex: number): HTMLDivElement {
+  private _renderTablePreview(
+    block: ITemplateTableBlock,
+    blockIndex: number,
+    parentIndex?: number
+  ): HTMLDivElement {
     const wrap = document.createElement('div')
     wrap.className = 'td-canvas__table-preview'
     wrap.addEventListener('click', e => e.stopPropagation())
@@ -468,7 +765,10 @@ export class SchemaCanvas {
           const chip = document.createElement('span')
           chip.className = 'td-canvas__table-field-chip'
           chip.textContent = col.field.label || col.field.id
-          chip.addEventListener('click', () => this._selectField(blockIndex, col.field!.id))
+          chip.addEventListener('click', event => {
+            event.stopPropagation()
+            this._selectField(blockIndex, col.field!.id, parentIndex)
+          })
           td.append(chip)
         }
         tr.append(td)
@@ -492,25 +792,209 @@ export class SchemaCanvas {
   private _renderNestedBlocks(
     children: ITemplateBlock[],
     parentIndex: number,
-    isRow: boolean
+    groupDirection: 'row' | 'column' | null
   ): HTMLDivElement {
     const body = document.createElement('div')
-    body.className = `td-canvas__nested-body${isRow ? ' td-canvas__nested-body--row' : ''}`
+    const isRow = groupDirection === 'row'
+    body.className = `td-canvas__nested-body${isRow ? ' td-canvas__nested-body--row' : ''}${groupDirection ? ` td-canvas__nested-body--${groupDirection}` : ''}`
     body.addEventListener('click', e => e.stopPropagation())
+
+    if (groupDirection) {
+      const guide = document.createElement('div')
+      guide.className = `td-canvas__group-preview td-canvas__group-preview--${groupDirection}`
+      guide.textContent = groupDirection === 'row'
+        ? '横向组合：子块会在同一行内排列'
+        : '纵向组合：子块会按上下顺序堆叠'
+      body.append(guide)
+    }
 
     if (children.length === 0) {
       const empty = document.createElement('div')
-      empty.className = 'td-canvas__nested-empty'
+      empty.className = 'td-canvas__nested-empty td-canvas__drop-target'
       empty.textContent = '暂无子块'
+      empty.addEventListener('dragover', event => {
+        if (!hasPaletteDragPayload(event.dataTransfer)) return
+        const invalidMessage = this._getInvalidNestedDropMessage(parentIndex)
+        if (invalidMessage) {
+          clearNestedDragOver()
+          this._markInvalidNestedTarget(
+            empty,
+            'td-canvas__drop-target--invalid',
+            invalidMessage
+          )
+          if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'
+          event.stopPropagation()
+          return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        empty.classList.add('td-canvas__drop-target--active')
+      })
+      empty.addEventListener('dragleave', () => {
+        empty.classList.remove('td-canvas__drop-target--active')
+      })
+      empty.addEventListener('drop', event => {
+        const payload = parsePaletteDragPayload(event.dataTransfer)
+        empty.classList.remove('td-canvas__drop-target--active')
+        if (!payload) return
+        event.preventDefault()
+        event.stopPropagation()
+        const blocks = this._filterNestedInsertBlocks(
+          parentIndex,
+          this._createBlocksFromPayload(payload)
+        )
+        if (!blocks.length) return
+        this.options.onNestedInsertAt?.(parentIndex, 0, blocks)
+      })
       body.append(empty)
     }
 
     let nestedDragFrom: number | null = null
 
+    const clearNestedDragOver = () => this._clearDragOver(body)
+
+    const createNestedDropSlot = (
+      childIndex: number,
+      isEnd = false
+    ): HTMLDivElement => {
+      const slot = document.createElement('div')
+      slot.className = `td-canvas__drop-slot td-canvas__drop-slot--nested${isEnd ? ' td-canvas__drop-slot--end' : ''}`
+      slot.title = isEnd ? '拖到这里追加到容器末尾' : `拖到这里插入到第 ${childIndex + 1} 位前`
+
+      slot.addEventListener('dragover', event => {
+        const hasPalettePayload = hasPaletteDragPayload(event.dataTransfer)
+        if (nestedDragFrom === null && !hasPalettePayload) return
+        const invalidMessage = this._getInvalidNestedDropMessage(parentIndex)
+        if (invalidMessage) {
+          clearNestedDragOver()
+          this._markInvalidNestedTarget(
+            slot,
+            'td-canvas__drop-slot--invalid',
+            invalidMessage
+          )
+          if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'
+          event.stopPropagation()
+          return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        clearNestedDragOver()
+        slot.classList.add('td-canvas__drop-slot--active')
+      })
+
+      slot.addEventListener('dragleave', () => {
+        slot.classList.remove('td-canvas__drop-slot--active')
+      })
+
+      slot.addEventListener('drop', event => {
+        const payload = parsePaletteDragPayload(event.dataTransfer)
+        const sourceIndex = nestedDragFrom
+        clearNestedDragOver()
+        if (sourceIndex == null && !payload) return
+        event.preventDefault()
+        event.stopPropagation()
+
+        if (sourceIndex != null) {
+          const newChildren = [...children]
+          const [moved] = newChildren.splice(sourceIndex, 1)
+          const targetIndex = childIndex > sourceIndex ? childIndex - 1 : childIndex
+          newChildren.splice(targetIndex, 0, moved)
+          this.options.onNestedReorder?.(parentIndex, newChildren)
+          return
+        }
+
+        if (!payload) return
+        const blocks = this._filterNestedInsertBlocks(
+          parentIndex,
+          this._createBlocksFromPayload(payload)
+        )
+        if (!blocks.length) return
+        this.options.onNestedInsertAt?.(parentIndex, childIndex, blocks)
+      })
+
+      return slot
+    }
+
     children.forEach((child, childIndex) => {
+      body.append(createNestedDropSlot(childIndex))
+
+      const isChildSelected =
+        this.selection?.kind === 'block' &&
+        this.selection.blockIndex === childIndex &&
+        this.selection.parentIndex === parentIndex
+
       const childCard = document.createElement('div')
-      childCard.className = 'td-canvas__nested-block'
+      childCard.className = `td-canvas__nested-block${isChildSelected ? ' td-canvas__block--selected' : ''}${isRow ? ' td-canvas__nested-block--row' : ''}`
       childCard.draggable = true
+      childCard.dataset.parentIndex = String(parentIndex)
+      childCard.dataset.childIndex = String(childIndex)
+
+      childCard.addEventListener('click', event => {
+        event.stopPropagation()
+        this._selectBlock(childIndex, parentIndex)
+      })
+
+      childCard.addEventListener('dragover', event => {
+        const hasPalettePayload = hasPaletteDragPayload(event.dataTransfer)
+        if (nestedDragFrom === null && !hasPalettePayload) return
+        const invalidMessage = this._getInvalidNestedDropMessage(parentIndex)
+        if (invalidMessage) {
+          clearNestedDragOver()
+          this._markInvalidNestedTarget(
+            childCard,
+            'td-canvas__nested-block--invalid',
+            invalidMessage
+          )
+          if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'
+          event.stopPropagation()
+          return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        clearNestedDragOver()
+        const placement = this._getDropPlacement(childCard, event.clientY, 'y')
+        childCard.classList.add(
+          placement === 'after'
+            ? 'td-canvas__block--drop-after'
+            : 'td-canvas__block--drop-before'
+        )
+      })
+
+      childCard.addEventListener('dragleave', event => {
+        if (!childCard.contains(event.relatedTarget as Node)) {
+          childCard.classList.remove('td-canvas__block--drop-before')
+          childCard.classList.remove('td-canvas__block--drop-after')
+        }
+      })
+
+      childCard.addEventListener('drop', event => {
+        const payload = parsePaletteDragPayload(event.dataTransfer)
+        const sourceIndex = nestedDragFrom
+        if (sourceIndex == null && !payload) return
+        event.preventDefault()
+        event.stopPropagation()
+
+        const placement = this._getDropPlacement(childCard, event.clientY, 'y')
+        clearNestedDragOver()
+        let targetIndex = childIndex + (placement === 'after' ? 1 : 0)
+
+        if (sourceIndex != null) {
+          const newChildren = [...children]
+          const [moved] = newChildren.splice(sourceIndex, 1)
+          if (targetIndex > sourceIndex) targetIndex -= 1
+          newChildren.splice(targetIndex, 0, moved)
+          this.options.onNestedReorder?.(parentIndex, newChildren)
+          return
+        }
+
+        if (!payload) return
+        const blocks = this._filterNestedInsertBlocks(
+          parentIndex,
+          this._createBlocksFromPayload(payload)
+        )
+        if (!blocks.length) return
+        this.options.onNestedInsertAt?.(parentIndex, targetIndex, blocks)
+      })
 
       childCard.addEventListener('dragstart', e => {
         nestedDragFrom = childIndex
@@ -521,29 +1005,11 @@ export class SchemaCanvas {
       childCard.addEventListener('dragend', () => {
         nestedDragFrom = null
         childCard.classList.remove('td-canvas__block--dragging')
-        body.querySelectorAll('.td-canvas__block--drag-over').forEach(el =>
-          el.classList.remove('td-canvas__block--drag-over')
-        )
+        clearNestedDragOver()
       })
-      childCard.addEventListener('dragover', e => {
-        e.preventDefault()
-        e.stopPropagation()
-        if (nestedDragFrom === childIndex) return
-        childCard.classList.add('td-canvas__block--drag-over')
-      })
-      childCard.addEventListener('dragleave', () => {
-        childCard.classList.remove('td-canvas__block--drag-over')
-      })
-      childCard.addEventListener('drop', e => {
-        e.preventDefault()
-        e.stopPropagation()
-        childCard.classList.remove('td-canvas__block--drag-over')
-        if (nestedDragFrom === null || nestedDragFrom === childIndex) return
-        const newChildren = [...children]
-        const [moved] = newChildren.splice(nestedDragFrom, 1)
-        newChildren.splice(childIndex, 0, moved)
-        this.options.onNestedReorder?.(parentIndex, newChildren)
-      })
+
+      const childHeader = document.createElement('div')
+      childHeader.className = 'td-canvas__nested-block-header'
 
       const label = document.createElement('span')
       label.className = 'td-canvas__block-type'
@@ -586,9 +1052,16 @@ export class SchemaCanvas {
       delBtn.className += ' td-canvas__action--danger'
       childActions.append(upBtn, downBtn, delBtn)
 
-      childCard.append(label, summary, childActions)
+      childHeader.append(label, summary, childActions)
+      childCard.append(childHeader)
+      const childBody = this._renderBlockBody(child, childIndex, parentIndex)
+      if (childBody) childCard.append(childBody)
       body.append(childCard)
     })
+
+    if (children.length > 0) {
+      body.append(createNestedDropSlot(children.length, true))
+    }
 
     if (this.options.onNestedInsert) {
       const addRow = document.createElement('div')
@@ -602,7 +1075,7 @@ export class SchemaCanvas {
       emptyOpt.textContent = '+ 添加子块'
       addSel.append(emptyOpt)
 
-      const childTypes: ITemplateBlock['type'][] = ['paragraph', 'fieldRow', 'staticText', 'separator', 'table']
+      const childTypes = this._getAllowedNestedTypes(parentIndex)
       for (const type of childTypes) {
         const o = document.createElement('option')
         o.value = type
@@ -611,7 +1084,7 @@ export class SchemaCanvas {
       }
       addSel.addEventListener('change', () => {
         const type = addSel.value as ITemplateBlock['type']
-        if (!type) return
+        if (!type || !childTypes.includes(type)) return
         const newBlock = this.createDefaultBlock(type)
         this.options.onNestedInsert?.(parentIndex, newBlock)
         addSel.value = ''
@@ -625,15 +1098,18 @@ export class SchemaCanvas {
 
   private _renderFieldChips(
     fields: ITemplateField[],
-    blockIndex: number
+    blockIndex: number,
+    options?: { editable?: boolean; parentIndex?: number }
   ): HTMLDivElement {
     const body = document.createElement('div')
     body.className = 'td-canvas__block-body'
+    let dragFieldIndex: number | null = null
 
-    fields.forEach(field => {
+    fields.forEach((field, fieldIndex) => {
       const isFieldSelected =
         this.selection?.kind === 'field' &&
         this.selection.blockIndex === blockIndex &&
+        this.selection.parentIndex === options?.parentIndex &&
         this.selection.fieldId === field.id
 
       const chip = document.createElement('div')
@@ -641,8 +1117,49 @@ export class SchemaCanvas {
       chip.title = `ID: ${field.id}`
       chip.addEventListener('click', e => {
         e.stopPropagation()
-        this._selectField(blockIndex, field.id)
+        this._selectField(blockIndex, field.id, options?.parentIndex)
       })
+
+      if (options?.editable) {
+        chip.draggable = true
+        chip.classList.add('td-canvas__field-chip--editable')
+        chip.addEventListener('dragstart', event => {
+          dragFieldIndex = fieldIndex
+          chip.classList.add('td-canvas__field-chip--dragging')
+          if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+        })
+        chip.addEventListener('dragend', () => {
+          dragFieldIndex = null
+          chip.classList.remove('td-canvas__field-chip--dragging')
+          this._clearDragOver(body)
+        })
+        chip.addEventListener('dragover', event => {
+          if (dragFieldIndex === null) return
+          event.preventDefault()
+          this._clearDragOver(body)
+          const placement = this._getDropPlacement(chip, event.clientX, 'x')
+          chip.classList.add(
+            placement === 'after'
+              ? 'td-canvas__field-chip--drop-after'
+              : 'td-canvas__field-chip--drop-before'
+          )
+        })
+        chip.addEventListener('drop', event => {
+          if (dragFieldIndex === null) return
+          event.preventDefault()
+          event.stopPropagation()
+          const nextFields = [...fields]
+          const [moving] = nextFields.splice(dragFieldIndex, 1)
+          let targetIndex = fieldIndex + (
+            this._getDropPlacement(chip, event.clientX, 'x') === 'after' ? 1 : 0
+          )
+          if (targetIndex > dragFieldIndex) targetIndex -= 1
+          nextFields.splice(targetIndex, 0, moving)
+          dragFieldIndex = null
+          this._clearDragOver(body)
+          this.options.onFieldRowReorder?.(blockIndex, nextFields)
+        })
+      }
 
       const label = document.createElement('span')
       label.className = 'td-canvas__field-label'
@@ -693,6 +1210,19 @@ export class SchemaCanvas {
           dotWrap.append(dot)
         })
         chip.append(dotWrap)
+      }
+
+      if (options?.editable) {
+        const deleteBtn = document.createElement('button')
+        deleteBtn.type = 'button'
+        deleteBtn.className = 'td-canvas__field-chip-action'
+        deleteBtn.textContent = '×'
+        deleteBtn.title = '删除字段'
+        deleteBtn.addEventListener('click', event => {
+          event.stopPropagation()
+          this.options.onFieldRowDelete?.(blockIndex, field.id)
+        })
+        chip.append(deleteBtn)
       }
 
       body.append(chip)

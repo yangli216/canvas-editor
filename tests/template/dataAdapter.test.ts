@@ -54,6 +54,7 @@ const schema: ITemplateSchema = {
               id: 'patientName',
               type: 'text',
               label: '姓名',
+              required: true,
               metadata: {
                 businessCode: 'patient.name',
                 dataSource: 'his.patient',
@@ -209,5 +210,35 @@ describe('template data adapter', () => {
     registry.unregister(adapter.id)
     expect(registry.getByDataSource('his.patient')).toBeUndefined()
     expect(registry.list()).toHaveLength(0)
+  })
+
+  it('运行时能输出业务数据绑定预检摘要', () => {
+    const { editor } = createMockEditor()
+    const registry = new TemplateDataAdapterRegistry()
+    registry.register(createMockHisAdapter({ id: 'mock-his-test' }))
+
+    const runtime = createTemplateRuntime(editor as any, schema)
+    const inspection = runtime.inspectDataBinding({ registry })
+
+    expect(inspection.totalFieldCount).toBe(5)
+    expect(inspection.businessFieldCount).toBe(5)
+    expect(inspection.boundDataSourceCount).toBe(3)
+    expect(inspection.adapterCoveredFieldCount).toBe(4)
+    expect(inspection.requiredFieldCount).toBe(1)
+    expect(inspection.requiredEmptyFieldCount).toBe(1)
+    expect(
+      inspection.dataSources.find(item => item.dataSource === 'his.patient')
+        ?.adapterId
+    ).toBe('mock-his-test')
+    expect(
+      inspection.issues.some(
+        item => item.type === 'missingAdapter' && item.fieldId === 'remoteFlag'
+      )
+    ).toBe(true)
+    expect(
+      inspection.issues.some(
+        item => item.type === 'requiredEmpty' && item.fieldId === 'patientName'
+      )
+    ).toBe(true)
   })
 })

@@ -150,4 +150,36 @@ describe('template registry lifecycle', () => {
     expect(latestPublished?.note).toBe('首版上线')
     expect(latestPublished?.schemaSnapshot?.version).toBe('1.0.0')
   })
+
+  it('刷新后本地保存的同 id 模板可以覆盖内置模板', () => {
+    const id = `registry-storage-override-${Date.now()}`
+    const builtInSchema = createSchema(id)
+    const customSchema = {
+      ...createSchema(id),
+      name: '本地覆盖后的模板',
+      description: '刷新后应保留'
+    }
+    const now = Date.now()
+
+    templateRegistry.register(builtInSchema, '住院记录', true)
+    localStorage.setItem('canvas-editor:templates', JSON.stringify([
+      {
+        schema: customSchema,
+        category: '自定义住院记录',
+        builtIn: false,
+        createdAt: now,
+        updatedAt: now,
+        status: 'draft',
+        versionHistory: []
+      }
+    ]))
+
+    templateRegistry.loadFromStorage()
+
+    expect(templateRegistry.getEntry(id)?.builtIn).toBe(false)
+    expect(templateRegistry.getEntry(id)?.category).toBe('自定义住院记录')
+    expect(templateRegistry.getEntry(id)?.schema.name).toBe('本地覆盖后的模板')
+
+    localStorage.removeItem('canvas-editor:templates')
+  })
 })

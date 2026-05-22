@@ -8,21 +8,36 @@ import type {
   ITemplateTableBlock,
   ITemplateTableColumn,
   ITemplateStaticTextBlock,
+  ITemplateSeparatorBlock,
   ITemplateRule,
   ITemplateCondition,
   ITemplateOption,
   ITemplateSegment,
   ITemplateLayout
 } from '../../editor/template/index'
-import { PAGE_SIZE_PRESETS } from '../../editor/template/index'
+import {
+  PAGE_SIZE_PRESETS,
+  TEMPLATE_SYSTEM_VARIABLES
+} from '../../editor/template/index'
 import type { PageSizePreset } from '../../editor/template/index'
 import type { SelectionTarget } from './SchemaCanvas'
 
+export type PropertiesChangePhase = 'input' | 'commit'
+
 export interface IPropertiesPanelOptions {
-  onBlockChange: (blockIndex: number, updated: ITemplateBlock) => void
-  onFieldChange: (blockIndex: number, fieldId: string, updated: ITemplateField) => void
+  onBlockChange: (
+    blockIndex: number,
+    updated: ITemplateBlock,
+    phase?: PropertiesChangePhase
+  ) => void
+  onFieldChange: (
+    blockIndex: number,
+    fieldId: string,
+    updated: ITemplateField,
+    phase?: PropertiesChangePhase
+  ) => void
   onAddField: (blockIndex: number) => void
-  onLayoutChange?: (layout: ITemplateLayout) => void
+  onLayoutChange?: (layout: ITemplateLayout, phase?: PropertiesChangePhase) => void
 }
 
 const RULE_TYPE_COLORS: Record<string, string> = {
@@ -31,6 +46,29 @@ const RULE_TYPE_COLORS: Record<string, string> = {
   readonly: '#9c27b0',
   required: '#e53935',
   cascade: '#2e7d32'
+}
+
+const RUNTIME_TEXT_TOKENS = [
+  {
+    label: '打印时间',
+    value: TEMPLATE_SYSTEM_VARIABLES.PRINT_TIME
+  },
+  {
+    label: '操作者',
+    value: TEMPLATE_SYSTEM_VARIABLES.OPERATOR_NAME
+  }
+]
+
+let activeChangePhase: PropertiesChangePhase = 'commit'
+
+function withChangePhase(phase: PropertiesChangePhase, callback: () => void) {
+  const previous = activeChangePhase
+  activeChangePhase = phase
+  try {
+    callback()
+  } finally {
+    activeChangePhase = previous
+  }
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -42,31 +80,131 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return e
 }
 
-function row(label: string, input: HTMLElement): HTMLDivElement {
+function row(label: string, input: HTMLElement, help?: string): HTMLDivElement {
   const wrap = el('div', 'td-props__row')
   const lbl = el('label', 'td-props__label')
-  lbl.textContent = label
+  const labelText = el('span')
+  labelText.textContent = label
+  lbl.append(labelText)
+  if (help) {
+    const helpIcon = el('span', 'td-props__help')
+    helpIcon.textContent = '?'
+    helpIcon.setAttribute('data-tooltip', help)
+    lbl.append(helpIcon)
+  }
   wrap.append(lbl, input)
   return wrap
 }
 
-function textInput(value: string, onChange: (v: string) => void): HTMLInputElement {
+function textInput(
+  value: string,
+  onChange: (v: string) => void,
+  placeholder?: string
+): HTMLInputElement {
   const inp = el('input', 'td-props__input')
   inp.type = 'text'
   inp.value = value
-  inp.addEventListener('input', () => onChange(inp.value))
+  if (placeholder) inp.placeholder = placeholder
+  let composing = false
+  inp.addEventListener('compositionstart', () => { composing = true })
+  inp.addEventListener('compositionend', () => {
+    composing = false
+    withChangePhase('input', () => onChange(inp.value))
+  })
+  inp.addEventListener('input', () => {
+    if (composing) return
+    withChangePhase('input', () => onChange(inp.value))
+  })
+  inp.addEventListener('blur', () => {
+    withChangePhase('commit', () => onChange(inp.value))
+  })
   return inp
 }
 
-function numberInput(value: number | undefined, onChange: (v: number | undefined) => void): HTMLInputElement {
+function numberInput(
+  value: number | undefined,
+  onChange: (v: number | undefined) => void,
+  placeholder?: string
+): HTMLInputElement {
   const inp = el('input', 'td-props__input')
   inp.type = 'number'
   inp.value = value != null ? String(value) : ''
-  inp.addEventListener('input', () => {
+  if (placeholder) inp.placeholder = placeholder
+  const readValue = () => {
     const n = parseFloat(inp.value)
-    onChange(isNaN(n) ? undefined : n)
+    return isNaN(n) ? undefined : n
+  }
+  inp.addEventListener('input', () => {
+    withChangePhase('input', () => onChange(readValue()))
+  })
+  inp.addEventListener('blur', () => {
+    withChangePhase('commit', () => onChange(readValue()))
   })
   return inp
+}
+
+function textareaInput(
+  value: string,
+  onChange: (v: string) => void,
+  placeholder?: string,
+  rows = 4
+): HTMLTextAreaElement {
+  const ta = el('textarea', 'td-props__textarea')
+  ta.value = value
+  ta.rows = rows
+  if (placeholder) ta.placeholder = placeholder
+  let composing = false
+  ta.addEventListener('compositionstart', () => { composing = true })
+  ta.addEventListener('compositionend', () => {
+    composing = false
+    withChangePhase('input', () => onChange(ta.value))
+  })
+  ta.addEventListener('input', () => {
+    if (composing) return
+    withChangePhase('input', () => onChange(ta.value))
+  })
+  ta.addEventListener('blur', () => {
+    withChangePhase('commit', () => onChange(ta.value))
+  })
+  return ta
+}
+
+function card(title: string, children: HTMLElement[], help?: string): HTMLDivElement {
+  const wrap = el('div', 'td-props__card')
+  const header = el('div', 'td-props__card-title')
+  const text = el('span')
+  text.textContent = title
+  header.append(text)
+  if (help) {
+    const helpIcon = el('span', 'td-props__help')
+    helpIcon.textContent = '?'
+    helpIcon.setAttribute('data-tooltip', help)
+    header.append(helpIcon)
+  }
+  wrap.append(header, ...children)
+  return wrap
+}
+
+function tokenChips(
+  items: Array<{ label: string; value: string }>,
+  onPick: (value: string) => void
+): HTMLDivElement {
+  const wrap = el('div', 'td-props__chip-row')
+  items.forEach(item => {
+    const btn = el('button', 'td-props__chip-btn')
+    btn.type = 'button'
+    btn.textContent = item.label
+    btn.title = item.value
+    btn.addEventListener('click', () => onPick(item.value))
+    wrap.append(btn)
+  })
+  return wrap
+}
+
+function note(text: string): HTMLDivElement {
+  const wrap = el('div', 'td-props__hint')
+  wrap.textContent = text
+  return wrap
 }
 
 function checkboxInput(
@@ -180,11 +318,18 @@ export class PropertiesPanel {
     title.textContent = '页面设置'
     this.container.append(title)
 
-    const layout = this.layout
     const onChg = (patch: Partial<ITemplateLayout>) => {
-      const updated = { ...layout, ...patch }
+      const updated = { ...this.layout, ...patch }
       this.layout = updated
-      this.options.onLayoutChange?.(updated)
+      this.options.onLayoutChange?.(updated, activeChangePhase)
+    }
+    const onFooterRuntimeChange = (patch: Partial<NonNullable<ITemplateLayout['footerRuntime']>>) => {
+      onChg({
+        footerRuntime: {
+          ...(this.layout.footerRuntime ?? {}),
+          ...patch
+        }
+      })
     }
 
     // Paper size preset
@@ -192,16 +337,16 @@ export class PropertiesPanel {
       label: PAGE_SIZE_PRESETS[k].label,
       value: k
     }))
-    this.container.append(
-      row('纸张大小', selectInput(sizeOpts, layout.pageSize ?? 'A4', v => onChg({ pageSize: v as PageSizePreset })))
-    )
+    const pageRows: HTMLElement[] = [
+      row('纸张大小', selectInput(sizeOpts, this.layout.pageSize ?? 'A4', v => onChg({ pageSize: v as PageSizePreset })))
+    ]
 
     // Orientation toggle
     const oriWrap = el('div', 'td-props__row')
     const oriLbl = el('label', 'td-props__label')
     oriLbl.textContent = '纸张方向'
     const oriBtns = el('div', 'td-props__btn-group')
-    const ori = layout.orientation ?? 'portrait'
+    const ori = this.layout.orientation ?? 'portrait'
     for (const opt of [{ value: 'portrait', label: '纵向' }, { value: 'landscape', label: '横向' }]) {
       const btn = el('button', `td-props__dir-btn${ori === opt.value ? ' td-props__dir-btn--active' : ''}`)
       btn.type = 'button'
@@ -210,12 +355,43 @@ export class PropertiesPanel {
       oriBtns.append(btn)
     }
     oriWrap.append(oriLbl, oriBtns)
-    this.container.append(oriWrap)
+    pageRows.push(oriWrap)
+    const paperCard = card(
+      '纸张版式',
+      pageRows,
+      '控制设计画布与运行预览使用的纸张尺寸、方向和默认页面尺寸。'
+    )
+    paperCard.dataset.layoutSection = 'paper'
+    this.container.append(paperCard)
 
     // Margins
-    const marginsTitle = el('div', 'td-props__subsection-title')
-    marginsTitle.textContent = '页边距 (px)'
-    this.container.append(marginsTitle)
+    const marginRows: HTMLElement[] = []
+
+    const presets = el('div', 'td-props__preset-grid')
+    const marginPresets: Array<{
+      label: string
+      desc: string
+      value: [number, number, number, number]
+    }> = [
+      { label: '病历常规', desc: '上100 / 右120 / 下100 / 左120', value: [100, 120, 100, 120] },
+      { label: '紧凑打印', desc: '上72 / 右88 / 下72 / 左88', value: [72, 88, 72, 88] },
+      { label: '签章留白', desc: '上100 / 右120 / 下150 / 左120', value: [100, 120, 150, 120] }
+    ]
+    marginPresets.forEach(preset => {
+      const btn = el('button', 'td-props__preset-card')
+      btn.type = 'button'
+      const label = el('strong')
+      label.textContent = preset.label
+      const desc = el('span')
+      desc.textContent = preset.desc
+      btn.append(label, desc)
+      btn.addEventListener('click', () => {
+        onChg({ margins: preset.value })
+        this._render()
+      })
+      presets.append(btn)
+    })
+    marginRows.push(presets)
 
     const marginGrid = el('div', 'td-props__margin-grid')
     const marginDefs: { label: string; index: 0 | 1 | 2 | 3 }[] = [
@@ -238,18 +414,28 @@ export class PropertiesPanel {
         const current = (this.layout.margins ?? defaultMargins) as [number, number, number, number]
         const updated: [number, number, number, number] = [current[0], current[1], current[2], current[3]]
         updated[index] = val
-        onChg({ margins: updated })
+        withChangePhase('input', () => onChg({ margins: updated }))
+      })
+      inp.addEventListener('blur', () => {
+        const val = parseInt(inp.value) || 0
+        const current = (this.layout.margins ?? defaultMargins) as [number, number, number, number]
+        const updated: [number, number, number, number] = [current[0], current[1], current[2], current[3]]
+        updated[index] = val
+        withChangePhase('commit', () => onChg({ margins: updated }))
       })
       cell.append(lbl, inp)
       marginGrid.append(cell)
     }
-    this.container.append(marginGrid)
+    marginRows.push(marginGrid)
+    const marginsCard = card(
+      '页边距',
+      marginRows,
+      '常用病历页面预设可一键套用，数字框仍可继续精调。'
+    )
+    marginsCard.dataset.layoutSection = 'margins'
+    this.container.append(marginsCard)
 
     // Font defaults
-    const fontTitle = el('div', 'td-props__subsection-title')
-    fontTitle.textContent = '默认字体'
-    this.container.append(fontTitle)
-
     const fontFamilyOpts = [
       { label: '(系统默认)', value: '' },
       { label: '宋体', value: 'SimSun' },
@@ -259,14 +445,41 @@ export class PropertiesPanel {
       { label: '微软雅黑', value: 'Microsoft YaHei' },
       { label: 'Arial', value: 'Arial' }
     ]
-    this.container.append(
-      row('字体', selectInput(fontFamilyOpts, layout.defaultFont ?? '', v =>
+    this.container.append(card('默认字体', [
+      row('字体', selectInput(fontFamilyOpts, this.layout.defaultFont ?? '', v =>
         onChg({ defaultFont: v || undefined })
       )),
-      row('字号 (pt)', numberInput(layout.defaultFontSize, v =>
+      row('字号', numberInput(this.layout.defaultFontSize, v =>
         onChg({ defaultFontSize: v })
       ))
-    )
+    ], '模板默认正文建议使用宋体 14 号，贴近真实病历文书。'))
+
+    const footerRuntime = this.layout.footerRuntime ?? {}
+    this.container.append(card('页脚运行态', [
+      checkboxInput('显示页码', footerRuntime.enabledPageNumber ?? false, v =>
+        onFooterRuntimeChange({ enabledPageNumber: v })
+      ),
+      row('页码格式', textInput(
+        footerRuntime.pageNumberFormat ?? `第 ${TEMPLATE_SYSTEM_VARIABLES.PAGE_NO} / ${TEMPLATE_SYSTEM_VARIABLES.PAGE_COUNT} 页`,
+        v => onFooterRuntimeChange({ pageNumberFormat: v || undefined }),
+        `第 ${TEMPLATE_SYSTEM_VARIABLES.PAGE_NO} / ${TEMPLATE_SYSTEM_VARIABLES.PAGE_COUNT} 页`
+      ), '页码使用专用占位符渲染，适合统一分页页脚。'),
+      row(
+        '页码对齐',
+        alignButtons(footerRuntime.pageNumberAlign, v =>
+          onFooterRuntimeChange({ pageNumberAlign: v as 'left' | 'center' | 'right' })
+        )
+      ),
+      row('底边距', numberInput(footerRuntime.pageNumberBottom, v =>
+        onFooterRuntimeChange({ pageNumberBottom: v })
+      ), '默认 60'),
+      row('预览操作者', textInput(
+        footerRuntime.operatorName ?? '',
+        v => onFooterRuntimeChange({ operatorName: v || undefined }),
+        '如 张医生'
+      ), '用于设计器预览和运行时默认操作者展示。'),
+      note(`可用于静态文本/段落：${TEMPLATE_SYSTEM_VARIABLES.PRINT_TIME}、${TEMPLATE_SYSTEM_VARIABLES.OPERATOR_NAME}`)
+    ], '静态文本和段落文本支持 {{打印时间}}、{{操作者}} 两个系统变量；页码建议通过本分组统一控制。'))
 
     const hint = el('div', 'td-props__empty')
     hint.textContent = '点击块或字段查看其属性'
@@ -282,12 +495,12 @@ export class PropertiesPanel {
     this.container.append(title)
 
     const onChange = (updated: ITemplateBlock) =>
-      this.options.onBlockChange(blockIndex, updated)
+      this.options.onBlockChange(blockIndex, updated, activeChangePhase)
 
     if (block.type === 'section') {
       const sec = block as ITemplateSectionBlock
-      this.container.append(
-        row('标题', textInput(sec.title, v => onChange({ ...sec, title: v }))),
+      this.container.append(card('分节标题', [
+        row('标题', textInput(sec.title, v => onChange({ ...sec, title: v }), '请输入分节标题')),
         row(
           '级别',
           selectInput(
@@ -306,8 +519,17 @@ export class PropertiesPanel {
         row(
           '标题对齐',
           alignButtons(sec.align, v => onChange({ ...sec, align: v as ITemplateSectionBlock['align'] }))
+        ),
+        checkboxInput('标题后换行', sec.titleLineBreak ?? true, v =>
+          onChange({ ...sec, titleLineBreak: v })
+        ),
+        row('标题字号', numberInput(sec.titleStyle?.size, v =>
+          onChange({ ...sec, titleStyle: { ...sec.titleStyle, size: v } })
+        ), '继承默认'),
+        checkboxInput('标题加粗', sec.titleStyle?.bold ?? false, v =>
+          onChange({ ...sec, titleStyle: { ...sec.titleStyle, bold: v } })
         )
-      )
+      ], '分节用于病历结构组织，标题样式会直接影响文书层级。'))
       const allFieldIds = this._getAllFieldIds()
       this.container.append(this._renderBlockRulesEditor(sec, blockIndex, onChange, allFieldIds))
     }
@@ -340,16 +562,19 @@ export class PropertiesPanel {
 
     if (block.type === 'fieldRow') {
       const fr = block as ITemplateFieldRowBlock
-      this.container.append(
-        row('分隔符', textInput(fr.separator ?? '', v => onChange({ ...fr, separator: v || undefined }))),
+      this.container.append(card('字段行', [
+        row('分隔符', textInput(fr.separator ?? '', v => onChange({ ...fr, separator: v || undefined }), '默认空格')),
         row(
           '行对齐',
           alignButtons(fr.align, v => onChange({ ...fr, align: v as ITemplateFieldRowBlock['align'] }), true)
         ),
         checkboxInput('等宽栅格（平均分配控件宽度）', fr.equalWidth ?? false, v =>
           onChange({ ...fr, equalWidth: v || undefined })
+        ),
+        checkboxInput('字段行后换行', fr.lineBreak ?? true, v =>
+          onChange({ ...fr, lineBreak: v })
         )
-      )
+      ], '字段行适合横向排布多个短字段，等宽栅格可提升对齐稳定性。'))
       const addBtn = el('button', 'td-props__btn')
       addBtn.textContent = '+ 添加字段'
       addBtn.addEventListener('click', () => this.options.onAddField(blockIndex))
@@ -358,12 +583,21 @@ export class PropertiesPanel {
 
     if (block.type === 'paragraph') {
       const para = block as ITemplateParagraphBlock
-      this.container.append(
+      this.container.append(card('段落版式', [
         row(
           '对齐方式',
           alignButtons(para.align, v => onChange({ ...para, align: v as ITemplateParagraphBlock['align'] }), true)
+        ),
+        checkboxInput('段落后换行', para.lineBreak ?? true, v =>
+          onChange({ ...para, lineBreak: v })
+        ),
+        row('字号', numberInput(para.style?.size, v =>
+          onChange({ ...para, style: { ...para.style, size: v } })
+        ), '继承默认'),
+        checkboxInput('加粗', para.style?.bold ?? false, v =>
+          onChange({ ...para, style: { ...para.style, bold: v } })
         )
-      )
+      ], '段落可混排静态文本和字段，适合病史、专科情况等长文本结构。'))
       this.container.append(this._renderParagraphSegmentsEditor(para, onChange))
     }
 
@@ -371,15 +605,73 @@ export class PropertiesPanel {
       this.container.append(this._renderStaticTextEditor(block as ITemplateStaticTextBlock, onChange))
     }
 
+    if (block.type === 'separator') {
+      this.container.append(this._renderSeparatorEditor(block as ITemplateSeparatorBlock, onChange))
+    }
+
     if (block.type === 'table') {
       const tb = block as ITemplateTableBlock
-      this.container.append(
+      this.container.append(card('表格版式', [
         checkboxInput('动态行（用户可追加行）', tb.dynamicRows ?? false, v =>
           onChange({ ...tb, dynamicRows: v })
-        )
-      )
+        ),
+        row('表头高度', numberInput(tb.headerRowHeight, v =>
+          onChange({ ...tb, headerRowHeight: v })
+        ), '默认高度'),
+        row('行高', numberInput(tb.rowHeight, v =>
+          onChange({ ...tb, rowHeight: v })
+        ), '默认行高'),
+        row('边框宽度', numberInput(tb.borderWidth, v =>
+          onChange({ ...tb, borderWidth: v })
+        ), '默认 1'),
+        row('边框颜色', textInput(tb.borderColor ?? '', v =>
+          onChange({ ...tb, borderColor: v || undefined })
+        , '#d8dde6'))
+      ], '表格适合结构化清单、检查结果和护理记录。'))
       this.container.append(this._renderTableColumnsEditor(tb, onChange))
     }
+  }
+
+  private _renderSeparatorEditor(
+    block: ITemplateSeparatorBlock,
+    onChange: (updated: ITemplateBlock) => void
+  ): HTMLDivElement {
+    const presets = el('div', 'td-props__preset-grid')
+    const presetItems: Array<{ label: string; desc: string; patch: Partial<ITemplateSeparatorBlock> }> = [
+      { label: '实线', desc: '常规分隔', patch: { dashArray: undefined, lineWidth: 1, color: '#d8dde6' } },
+      { label: '虚线', desc: '轻量分隔', patch: { dashArray: [4, 4], lineWidth: 1, color: '#9aa3b2' } },
+      { label: '签章线', desc: '签名留痕', patch: { dashArray: undefined, lineWidth: 1, width: 180, align: 'right' } },
+      { label: '标题线', desc: '章节强调', patch: { dashArray: undefined, lineWidth: 2, color: '#303744' } }
+    ]
+    presetItems.forEach(item => {
+      const btn = el('button', 'td-props__preset-card')
+      btn.type = 'button'
+      const label = el('strong')
+      label.textContent = item.label
+      const desc = el('span')
+      desc.textContent = item.desc
+      btn.append(label, desc)
+      btn.addEventListener('click', () => onChange({ ...block, ...item.patch }))
+      presets.append(btn)
+    })
+
+    const dashValue = block.dashArray?.join(',') ?? ''
+    return card('分割线', [
+      presets,
+      row('颜色', textInput(block.color ?? '', v => onChange({ ...block, color: v || undefined }), '#d8dde6')),
+      row('线宽', numberInput(block.lineWidth, v => onChange({ ...block, lineWidth: v }), '1')),
+      row('长度', numberInput(block.width, v => onChange({ ...block, width: v }), '留空撑满')),
+      row('虚线', textInput(dashValue, v => {
+        const dashArray = v.split(',').map(item => Number(item.trim())).filter(item => !Number.isNaN(item))
+        onChange({ ...block, dashArray: dashArray.length ? dashArray : undefined })
+      }, '如 4,4')),
+      row(
+        '对齐',
+        alignButtons(block.align, v => onChange({ ...block, align: v as ITemplateSeparatorBlock['align'] }))
+      ),
+      row('上下留白', numberInput(block.spacing, v => onChange({ ...block, spacing: v }), '默认')),
+      row('垂直偏移', numberInput(block.offsetY, v => onChange({ ...block, offsetY: v }), '默认'))
+    ], '常用文书分割线可先套预设，再精调颜色、长度和偏移。')
   }
 
   // ── Paragraph segments editor ──────────────────────────────────────────────
@@ -396,6 +688,22 @@ export class PropertiesPanel {
     section.append(titleRow)
 
     const segments: ITemplateSegment[] = [...block.segments]
+
+    section.append(card('系统变量', [
+      tokenChips(RUNTIME_TEXT_TOKENS, value => {
+        const last = segments[segments.length - 1]
+        if (last?.type === 'text') {
+          segments[segments.length - 1] = {
+            ...last,
+            value: `${last.value}${value}`
+          }
+        } else {
+          segments.push({ type: 'text', value })
+        }
+        onChange({ ...block, segments: [...segments] })
+        renderList()
+      })
+    ], '段落中的纯文本段会在运行时替换 {{打印时间}}、{{操作者}}。'))
 
     const renderList = () => {
       const existing = section.querySelector('.td-props__segments-list')
@@ -469,14 +777,22 @@ export class PropertiesPanel {
     titleEl.textContent = '静态文本内容'
     section.append(titleEl)
 
-    const ta = el('textarea', 'td-props__textarea')
-    ta.value = block.text
-    ta.rows = 5
-    ta.placeholder = '在此输入固定显示的文字内容（如告知书条款、说明文字等）'
-    ta.addEventListener('input', () => onChange({ ...block, text: ta.value }))
+    const ta = textareaInput(
+      block.text,
+      v => onChange({ ...block, text: v }),
+      '在此输入固定显示的文字内容（如告知书条款、说明文字等）',
+      5
+    )
     section.append(ta)
+    section.append(card('系统变量', [
+      tokenChips(RUNTIME_TEXT_TOKENS, value => {
+        ta.value = `${ta.value}${value}`
+        ta.dispatchEvent(new Event('input'))
+        ta.focus()
+      })
+    ], '静态文本支持 {{打印时间}}、{{操作者}}，适合打印信息和落款说明。'))
 
-    section.append(
+    section.append(card('静态文本样式', [
       row(
         '对齐',
         selectInput(
@@ -492,13 +808,16 @@ export class PropertiesPanel {
       row('字号', numberInput(block.style?.size, v =>
         onChange({ ...block, style: { ...block.style, size: v } })
       )),
+      row('字体', textInput(block.style?.font ?? '', v =>
+        onChange({ ...block, style: { ...block.style, font: v || undefined } }), '继承默认'
+      )),
       checkboxInput('加粗', block.style?.bold ?? false, v =>
         onChange({ ...block, style: { ...block.style, bold: v } })
       ),
       checkboxInput('斜体', block.style?.italic ?? false, v =>
         onChange({ ...block, style: { ...block.style, italic: v } })
       )
-    )
+    ], '静态文本适合固定说明、告知内容和页眉页脚文案。'))
     return section
   }
 
@@ -537,6 +856,12 @@ export class PropertiesPanel {
         })
         headerInp.placeholder = '列标题'
 
+        const widthInp = numberInput(col.width, v => {
+          cols[i] = { ...cols[i], width: v }
+          onChange({ ...block, columns: [...cols] })
+        }, '列宽')
+        widthInp.classList.add('td-props__input--sm')
+
         const hasField = el('input', 'td-props__checkbox') as HTMLInputElement
         hasField.type = 'checkbox'
         hasField.checked = !!col.field
@@ -567,7 +892,7 @@ export class PropertiesPanel {
           renderCols()
         })
 
-        colRow.append(headerInp, hasField, del)
+        colRow.append(headerInp, widthInp, hasField, del)
         list.append(colRow)
       })
 
@@ -657,11 +982,13 @@ export class PropertiesPanel {
     this.container.append(title)
 
     const onChange = (updated: ITemplateField) => {
-      this.options.onFieldChange(blockIndex, fieldId, updated)
+      this.options.onFieldChange(blockIndex, fieldId, updated, activeChangePhase)
     }
 
-    this.container.append(
-      row('ID', textInput(field.id, v => onChange({ ...field, id: v }))),
+    this.container.append(this._renderFieldPresetPanel(field, onChange))
+
+    this.container.append(card('基础配置', [
+      row('ID', textInput(field.id, v => onChange({ ...field, id: v }), '如 patientName')),
       row(
         '类型',
         selectInput(
@@ -679,22 +1006,28 @@ export class PropertiesPanel {
           v => onChange({ ...field, type: v as ITemplateField['type'] })
         )
       ),
-      row('标签', textInput(field.label ?? '', v => onChange({ ...field, label: v || undefined }))),
-      row('占位符', textInput(field.placeholder ?? '', v => onChange({ ...field, placeholder: v || undefined }))),
-      row('宽度', numberInput(field.width, v => onChange({ ...field, width: v }))),
-      row('前缀', textInput(field.prefix ?? '', v => onChange({ ...field, prefix: v || undefined }))),
-      row('后缀', textInput(field.postfix ?? '', v => onChange({ ...field, postfix: v || undefined }))),
+      row('标签', textInput(field.label ?? '', v => onChange({ ...field, label: v || undefined }), '展示名称')),
+      row('占位符', textInput(field.placeholder ?? '', v => onChange({ ...field, placeholder: v || undefined }), '请输入')),
+      row('默认值', textInput(
+        Array.isArray(field.defaultValue) ? field.defaultValue.join(',') : field.defaultValue ?? '',
+        v => onChange({ ...field, defaultValue: v || undefined }),
+        '留空无默认值'
+      )),
+      row('宽度', numberInput(field.width, v => onChange({ ...field, width: v }), '留空自适应'), '留空按内容自适应；仅明确配置 width 时固定宽度。'),
+      row('最小宽度', numberInput(field.style?.minWidth, v =>
+        onChange({ ...field, style: { ...field.style, minWidth: v } }), '留空自适应'
+      )),
+      row('前置文本', textInput(field.preText ?? '', v => onChange({ ...field, preText: v || undefined }), '控件前静态文案')),
+      row('后置文本', textInput(field.postText ?? '', v => onChange({ ...field, postText: v || undefined }), '控件后静态文案')),
+      row('前缀', textInput(field.prefix ?? '', v => onChange({ ...field, prefix: v || undefined }), '如：体温')),
+      row('后缀', textInput(field.postfix ?? '', v => onChange({ ...field, postfix: v || undefined }), '如：℃')),
       checkboxInput('必填', field.required ?? false, v => onChange({ ...field, required: v })),
       checkboxInput('只读', field.readonly ?? false, v => onChange({ ...field, readonly: v })),
       checkboxInput('隐藏', field.hidden ?? false, v => onChange({ ...field, hidden: v })),
       checkboxInput('下划线', field.underline ?? false, v => onChange({ ...field, underline: v }))
-    )
+    ], '字段基础语义影响设计期、运行期和结构化导出。'))
 
     // Font / style settings
-    const fontSection = el('div', 'td-props__subsection')
-    const fontSectionTitle = el('div', 'td-props__subsection-title')
-    fontSectionTitle.textContent = '字体样式'
-    fontSection.append(fontSectionTitle)
     const fieldFontOpts = [
       { label: '(继承)', value: '' },
       { label: '宋体', value: 'SimSun' },
@@ -704,11 +1037,12 @@ export class PropertiesPanel {
       { label: '微软雅黑', value: 'Microsoft YaHei' },
       { label: 'Arial', value: 'Arial' }
     ]
-    fontSection.append(
+    this.container.append(card('字体样式', [
+      this._renderTextStylePresets(field, onChange),
       row('字体', selectInput(fieldFontOpts, field.style?.font ?? '', v =>
         onChange({ ...field, style: { ...field.style, font: v || undefined } })
       )),
-      row('字号 (pt)', numberInput(field.style?.size, v =>
+      row('字号', numberInput(field.style?.size, v =>
         onChange({ ...field, style: { ...field.style, size: v } })
       )),
       checkboxInput('加粗', field.style?.bold ?? false, v =>
@@ -717,8 +1051,7 @@ export class PropertiesPanel {
       checkboxInput('斜体', field.style?.italic ?? false, v =>
         onChange({ ...field, style: { ...field.style, italic: v } })
       )
-    )
-    this.container.append(fontSection)
+    ], '常用文本样式可先套预设，再按需微调。'))
 
     // Number field enhancements
     if (field.type === 'number') {
@@ -740,8 +1073,92 @@ export class PropertiesPanel {
       this.container.append(this._renderOptionsEditor(field, onChange))
     }
 
+    this.container.append(this._renderMetadataEditor(field, onChange))
+
     const allFieldIds = this._getAllFieldIds()
     this.container.append(this._renderRulesEditor(field, onChange, allFieldIds))
+  }
+
+  private _renderFieldPresetPanel(
+    field: ITemplateField,
+    onChange: (f: ITemplateField) => void
+  ): HTMLDivElement {
+    const presets = el('div', 'td-props__preset-grid')
+    const items: Array<{ label: string; desc: string; patch: Partial<ITemplateField> }> = [
+      { label: '短文本', desc: '姓名、床号、主诊断', patch: { type: 'text', width: undefined, placeholder: '请输入' } },
+      { label: '长文本', desc: '主诉、现病史、说明', patch: { type: 'textarea', width: undefined, placeholder: '请输入详细内容' } },
+      { label: '日期', desc: '入院、手术、签署时间', patch: { type: 'date', placeholder: '请选择日期' } },
+      { label: '数值', desc: '体温、血压、评分', patch: { type: 'number', placeholder: '请输入数值' } },
+      { label: '签名', desc: '医生、患者、家属签字', patch: { type: 'signature', width: 160, placeholder: '签名' } },
+      { label: '风险强调', desc: '红色加粗重点提示', patch: { style: { ...field.style, bold: true, highlight: '#fff1f0' } } }
+    ]
+    items.forEach(item => {
+      const btn = el('button', 'td-props__preset-card')
+      btn.type = 'button'
+      const label = el('strong')
+      label.textContent = item.label
+      const desc = el('span')
+      desc.textContent = item.desc
+      btn.append(label, desc)
+      btn.addEventListener('click', () => onChange({ ...field, ...item.patch }))
+      presets.append(btn)
+    })
+    return card('字段快配', [presets], '按病历模板高频字段场景快速套用类型、占位和样式。')
+  }
+
+  private _renderTextStylePresets(
+    field: ITemplateField,
+    onChange: (f: ITemplateField) => void
+  ): HTMLDivElement {
+    const presets = el('div', 'td-props__chip-row')
+    const items = [
+      { label: '正文', style: { font: 'SimSun', size: 14, bold: false } },
+      { label: '标题', style: { font: 'SimHei', size: 16, bold: true } },
+      { label: '提示', style: { font: 'SimSun', size: 12, italic: true } },
+      { label: '风险', style: { font: 'SimSun', size: 14, bold: true, highlight: '#fff1f0' } }
+    ]
+    items.forEach(item => {
+      const btn = el('button', 'td-props__chip-btn')
+      btn.type = 'button'
+      btn.textContent = item.label
+      btn.addEventListener('click', () => {
+        onChange({ ...field, style: { ...field.style, ...item.style } })
+      })
+      presets.append(btn)
+    })
+    return presets
+  }
+
+  private _renderMetadataEditor(
+    field: ITemplateField,
+    onChange: (f: ITemplateField) => void
+  ): HTMLDivElement {
+    const metadata = field.metadata ?? {}
+    const listToText = (value?: string[]) => value?.join(', ') ?? ''
+    const textToList = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean)
+    return card('业务元数据', [
+      row('业务编码', textInput(metadata.businessCode ?? '', v =>
+        onChange({ ...field, metadata: { ...metadata, businessCode: v || undefined } }), '如 patient.name'
+      ), 'HIS/EHR 回填、规则条件和结构化导出的业务稳定键。'),
+      row('字段分组', textInput(metadata.group ?? '', v =>
+        onChange({ ...field, metadata: { ...metadata, group: v || undefined } }), '如 patient'
+      )),
+      row('导出路径', textInput(metadata.exportPath ?? '', v =>
+        onChange({ ...field, metadata: { ...metadata, exportPath: v || undefined } }), '如 encounter.patient.name'
+      )),
+      row('权限标签', textInput(metadata.permission ?? '', v =>
+        onChange({ ...field, metadata: { ...metadata, permission: v || undefined } }), '如 doctor'
+      )),
+      row('数据源', textInput(metadata.dataSource ?? '', v =>
+        onChange({ ...field, metadata: { ...metadata, dataSource: v || undefined } }), '如 his.patient'
+      )),
+      row('监听事件', textInput(listToText(metadata.listeners), v =>
+        onChange({ ...field, metadata: { ...metadata, listeners: textToList(v) } }), '逗号分隔'
+      )),
+      row('业务标签', textInput(listToText(metadata.tags), v =>
+        onChange({ ...field, metadata: { ...metadata, tags: textToList(v) } }), '逗号分隔'
+      ))
+    ], '业务参数用于运行时回填、权限分桶、规则联动和结构化导出。')
   }
 
   // ── Block-level rules editor (section / group) ────────────────────────────
@@ -1179,5 +1596,12 @@ export class PropertiesPanel {
 
   getElement(): HTMLDivElement {
     return this.container
+  }
+
+  focusLayoutSection(section: 'paper' | 'margins') {
+    const target = this.container.querySelector(
+      `[data-layout-section="${section}"]`
+    ) as HTMLElement | null
+    target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
 }

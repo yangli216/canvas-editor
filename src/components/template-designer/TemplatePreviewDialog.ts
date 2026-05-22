@@ -2,7 +2,12 @@ import { EDITOR_COMPONENT, EditorComponent } from '../../editor'
 import Editor from '../../editor'
 import { PaperDirection } from '../../editor/dataset/enum/Editor'
 import type { ITemplateSchema } from '../../editor/template/index'
-import { compileTemplate, validateSchema, getPageConfig } from '../../editor/template/index'
+import {
+  compileTemplate,
+  getPageConfig,
+  getTemplatePageNumberOptions,
+  validateSchema
+} from '../../editor/template/index'
 import { TemplateRuleEngine } from '../../editor/template/TemplateRuleEngine'
 
 export class TemplatePreviewDialog {
@@ -67,6 +72,7 @@ export class TemplatePreviewDialog {
           width: pageConfig.width,
           height: pageConfig.height,
           margins: pageConfig.margins,
+          pageNumber: getTemplatePageNumberOptions(schema),
           paperDirection: pageConfig.orientation === 'landscape'
             ? PaperDirection.HORIZONTAL
             : PaperDirection.VERTICAL

@@ -294,7 +294,8 @@ class TemplateRegistry {
       if (!raw) return
       const stored = JSON.parse(raw) as ITemplateRegistryEntry[]
       for (const entry of stored) {
-        if (!this.entries.has(entry.schema.id)) {
+        const existing = this.entries.get(entry.schema.id)
+        if (!existing || existing.builtIn || existing.updatedAt <= entry.updatedAt) {
           this.entries.set(entry.schema.id, entry)
         }
       }

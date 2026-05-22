@@ -16,6 +16,10 @@ type TreeZone = 'main' | 'header' | 'footer'
 
 interface IStructureTreeOptions {
   onSelect: (zone: TreeZone, target: SelectionTarget) => void
+  onDeleteBlock?: (
+    zone: TreeZone,
+    target: { kind: 'block'; blockIndex: number; parentIndex?: number }
+  ) => void
 }
 
 const BLOCK_LABEL: Record<ITemplateBlock['type'], string> = {
@@ -452,7 +456,27 @@ export class StructureTree {
       badge.textContent = `规 ${block.rules.length}`
       button.append(badge)
     }
-    node.append(button)
+    const row = document.createElement('div')
+    row.className = 'td-tree__node-row'
+    row.append(button)
+
+    const deleteBtn = document.createElement('button')
+    deleteBtn.type = 'button'
+    deleteBtn.className = 'td-tree__node-action td-tree__node-action--danger'
+    deleteBtn.textContent = '×'
+    deleteBtn.title = '删除节点'
+    deleteBtn.addEventListener('click', event => {
+      event.preventDefault()
+      event.stopPropagation()
+      this.options.onDeleteBlock?.(zone, {
+        kind: 'block',
+        blockIndex: index,
+        ...(parentIndex != null ? { parentIndex } : {})
+      })
+    })
+    row.append(deleteBtn)
+
+    node.append(row)
 
     if (expanded && visibleFields.length) {
       const fieldWrap = document.createElement('div')

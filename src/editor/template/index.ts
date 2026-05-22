@@ -333,6 +333,14 @@ function createNewline(count = 1): IElement[] {
   return Array.from({ length: count }, () => ({ value: '\n' }))
 }
 
+function trimTrailingNewline(elementList: IElement[]): IElement[] {
+  const next = [...elementList]
+  while (next.length && next[next.length - 1].value === '\n') {
+    next.pop()
+  }
+  return next
+}
+
 function formatRuntimePrintTime(value?: Date | string): string {
   const date = value instanceof Date
     ? value
@@ -679,21 +687,33 @@ function compileGroupBlock(
   const childCtx: ITemplateContext = (block.id && block.rules?.length)
     ? { ...ctx, blockId: block.id, blockRules: block.rules }
     : ctx
+
+  if (block.direction === 'row') {
+    const rowElements: IElement[] = []
+    block.blocks.forEach((child, index) => {
+      if (index > 0 && block.separator) {
+        rowElements.push(
+          createTextElement(
+            block.separator,
+            {},
+            createTemplateExtension(childCtx, {
+              blockType: block.type
+            })
+          )
+        )
+      }
+      rowElements.push(...trimTrailingNewline(compileTemplateBlock(childCtx, child)))
+    })
+    if (rowElements.length) {
+      rowElements.push(...createNewline())
+    }
+    return rowElements
+  }
+
   const elementList: IElement[] = []
   block.blocks.forEach((child, index) => {
-    if (block.direction === 'row' && index > 0 && block.separator) {
-      elementList.push(
-        createTextElement(
-          block.separator,
-          {},
-          createTemplateExtension(childCtx, {
-            blockType: block.type
-          })
-        )
-      )
-    }
     elementList.push(...compileTemplateBlock(childCtx, child))
-    if (block.direction === 'column' && index < block.blocks.length - 1) {
+    if (index < block.blocks.length - 1) {
       const lastElement = elementList[elementList.length - 1]
       if (lastElement?.value !== '\n') {
         elementList.push(...createNewline())

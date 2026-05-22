@@ -106,6 +106,45 @@ export interface ITemplateRuntimeAdapterApplyResult {
   diagnostics: string[]
 }
 
+export interface ITemplateRuntimeInspectOptions {
+  adapterId?: string
+  dataSources?: string[]
+  registry?: TemplateDataAdapterRegistry
+}
+
+export interface ITemplateRuntimeDataSourceSummary {
+  dataSource: string
+  fieldCount: number
+  requiredCount: number
+  adapterId?: string
+  adapterLabel?: string
+  unresolvedFieldIds: string[]
+}
+
+export interface ITemplateRuntimeDataBindingIssue {
+  type:
+    | 'missingBusinessCode'
+    | 'missingDataSource'
+    | 'missingAdapter'
+    | 'requiredEmpty'
+  fieldId: string
+  label?: string
+  dataSource?: string
+  businessCode?: string
+  message: string
+}
+
+export interface ITemplateRuntimeDataBindingInspection {
+  totalFieldCount: number
+  businessFieldCount: number
+  boundDataSourceCount: number
+  adapterCoveredFieldCount: number
+  requiredFieldCount: number
+  requiredEmptyFieldCount: number
+  dataSources: ITemplateRuntimeDataSourceSummary[]
+  issues: ITemplateRuntimeDataBindingIssue[]
+}
+
 export interface ITemplateStructuredExtractResult extends ITemplateExtractResult {
   flat: Record<string, string | null>
   structured: Record<string, unknown>
@@ -343,6 +382,14 @@ function getFieldExportKey(field: ITemplateField): string {
   return field.metadata?.businessCode || field.id
 }
 
+function isRequiredField(field: ITemplateField): boolean {
+  return Boolean(field.required || field.rules?.some(rule => rule.type === 'required'))
+}
+
+function isEmptyRuntimeValue(value: string | null): boolean {
+  return value == null || value.trim().length === 0
+}
+
 function buildTableRows(editor: Editor, block: Extract<ITemplateBlock, { type: 'table' }>): Array<Record<string, string | null>> {
   const columnValues = block.columns.map(column =>
     column.field ? readControlValues(editor, column.field.id) : []
@@ -513,6 +560,107 @@ export class TemplateRuntime {
       result[dataSource] = nodes.slice()
     })
     return result
+  }
+
+  inspectDataBinding(
+    options: ITemplateRuntimeInspectOptions = {}
+  ): ITemplateRuntimeDataBindingInspection {
+    const registry = options.registry ?? templateDataAdapterRegistry
+    const explicitAdapter = options.adapterId ? registry.get(options.adapterId) : undefined
+    const dataSourceAllowList = options.dataSources?.length
+      ? new Set(options.dataSources)
+      : null
+    const issues: ITemplateRuntimeDataBindingIssue[] = []
+    const coveredFieldIds = new Set<string>()
+    let businessFieldCount = 0
+    let requiredFieldCount = 0
+    let requiredEmptyFieldCount = 0
+
+    const dataSources = Array.from(this.index.byDataSource.entries())
+      .filter(([dataSource]) => !dataSourceAllowList || dataSourceAllowList.has(dataSource))
+      .map(([dataSource, nodes]) => {
+        const adapter = explicitAdapter ?? registry.getByDataSource(dataSource)
+        const unresolvedFieldIds: string[] = []
+        nodes.forEach(node => {
+          if (adapter) {
+            coveredFieldIds.add(node.field.id)
+          } else {
+            unresolvedFieldIds.push(node.field.id)
+          }
+        })
+        return {
+          dataSource,
+          fieldCount: nodes.length,
+          requiredCount: nodes.filter(node => isRequiredField(node.field)).length,
+          adapterId: adapter?.id,
+          adapterLabel: adapter?.label,
+          unresolvedFieldIds
+        }
+      })
+
+    this.index.all.forEach(node => {
+      const { field, metadata } = node
+      const isRequired = isRequiredField(field)
+      if (metadata?.businessCode || metadata?.exportPath) {
+        businessFieldCount += 1
+      }
+      if (isRequired) {
+        requiredFieldCount += 1
+        const value = readControlValue(this.editor, field.id)
+        if (isEmptyRuntimeValue(value)) {
+          requiredEmptyFieldCount += 1
+          issues.push({
+            type: 'requiredEmpty',
+            fieldId: field.id,
+            label: field.label,
+            dataSource: metadata?.dataSource,
+            businessCode: metadata?.businessCode,
+            message: `必填字段 ${field.label || field.id} 当前为空`
+          })
+        }
+      }
+      if (!metadata?.businessCode && !metadata?.exportPath) {
+        issues.push({
+          type: 'missingBusinessCode',
+          fieldId: field.id,
+          label: field.label,
+          dataSource: metadata?.dataSource,
+          message: `字段 ${field.label || field.id} 未配置业务编码或导出路径`
+        })
+      }
+      if (!metadata?.dataSource) {
+        issues.push({
+          type: 'missingDataSource',
+          fieldId: field.id,
+          label: field.label,
+          businessCode: metadata?.businessCode,
+          message: `字段 ${field.label || field.id} 未绑定数据源`
+        })
+        return
+      }
+      const adapter = explicitAdapter ?? registry.getByDataSource(metadata.dataSource)
+      if (!adapter) {
+        issues.push({
+          type: 'missingAdapter',
+          fieldId: field.id,
+          label: field.label,
+          dataSource: metadata.dataSource,
+          businessCode: metadata.businessCode,
+          message: `字段 ${field.label || field.id} 的数据源 ${metadata.dataSource} 没有适配器`
+        })
+      }
+    })
+
+    return {
+      totalFieldCount: this.index.all.length,
+      businessFieldCount,
+      boundDataSourceCount: dataSources.length,
+      adapterCoveredFieldCount: coveredFieldIds.size,
+      requiredFieldCount,
+      requiredEmptyFieldCount,
+      dataSources,
+      issues
+    }
   }
 
   /**

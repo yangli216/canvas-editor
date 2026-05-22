@@ -1,4 +1,9 @@
 import type { ITemplateBlock, ITemplateFieldRowBlock, ITemplateParagraphBlock, ITemplateSectionBlock } from '../../editor/template/index'
+import {
+  clearActivePaletteDragPayload,
+  PALETTE_DRAG_MIME,
+  setActivePaletteDragPayload
+} from './paletteDragState'
 
 export interface IBlockPaletteItem {
   type: ITemplateBlock['type']
@@ -281,6 +286,7 @@ export class BlockPalette {
       const el = document.createElement('div')
       el.className = 'td-palette__item'
       el.title = item.description
+      el.draggable = true
 
       const icon = document.createElement('span')
       icon.className = 'td-palette__item-icon'
@@ -291,6 +297,19 @@ export class BlockPalette {
       label.textContent = item.label
 
       el.append(icon, label)
+      el.addEventListener('dragstart', event => {
+        setActivePaletteDragPayload({ kind: 'type', type: item.type })
+        event.dataTransfer?.setData(
+          PALETTE_DRAG_MIME,
+          JSON.stringify({ kind: 'type', type: item.type })
+        )
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'copy'
+        }
+      })
+      el.addEventListener('dragend', () => {
+        clearActivePaletteDragPayload()
+      })
       el.addEventListener('click', () => this.onInsert(item.type))
       list.append(el)
     }
@@ -310,6 +329,7 @@ export class BlockPalette {
         const el = document.createElement('div')
         el.className = 'td-palette__item td-palette__item--preset'
         el.title = preset.description
+        el.draggable = true
 
         const icon = document.createElement('span')
         icon.className = 'td-palette__item-icon'
@@ -320,6 +340,19 @@ export class BlockPalette {
         label.textContent = preset.label
 
         el.append(icon, label)
+        el.addEventListener('dragstart', event => {
+          setActivePaletteDragPayload({ kind: 'blocks', blocks: preset.blocks })
+          event.dataTransfer?.setData(
+            PALETTE_DRAG_MIME,
+            JSON.stringify({ kind: 'blocks', blocks: preset.blocks })
+          )
+          if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'copy'
+          }
+        })
+        el.addEventListener('dragend', () => {
+          clearActivePaletteDragPayload()
+        })
         el.addEventListener('click', () => this.onInsertBlocks!(preset.blocks))
         presetList.append(el)
       }

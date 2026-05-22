@@ -325,6 +325,47 @@ describe('template compiler', () => {
     expect(separator?.offsetY).toBe(DEFAULT_SEPARATOR_OFFSET_Y)
   })
 
+  it('横向组合会把子块编译到同一行，纵向组合保持逐行堆叠', () => {
+    const rowGroup = compileTemplate({
+      ...schema,
+      blocks: [
+        {
+          type: 'group',
+          direction: 'row',
+          blocks: [
+            { type: 'paragraph', segments: [{ type: 'text', value: '左侧' }] },
+            { type: 'paragraph', segments: [{ type: 'text', value: '右侧' }] }
+          ]
+        }
+      ]
+    })
+    const columnGroup = compileTemplate({
+      ...schema,
+      blocks: [
+        {
+          type: 'group',
+          direction: 'column',
+          blocks: [
+            { type: 'paragraph', segments: [{ type: 'text', value: '上方' }] },
+            { type: 'paragraph', segments: [{ type: 'text', value: '下方' }] }
+          ]
+        }
+      ]
+    })
+
+    expect(rowGroup.main.slice(0, 3).map(element => element.value)).toEqual([
+      '左侧',
+      '右侧',
+      '\n'
+    ])
+    expect(columnGroup.main.slice(0, 4).map(element => element.value)).toEqual([
+      '上方',
+      '\n',
+      '下方',
+      '\n'
+    ])
+  })
+
   it('静态文本与段落支持打印时间和操作者变量', () => {
     const runtimeSchema: ITemplateSchema = {
       ...schema,

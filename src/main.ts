@@ -28,7 +28,7 @@ import { Signature } from './components/signature/Signature'
 import { debounce, nextTick, scrollIntoView } from './utils'
 import { TemplateManager } from './components/template-designer/TemplateManager'
 import { registerBuiltInTemplates } from './editor/template/examples/index'
-import { compileTemplate } from './editor/template/index'
+import { compileTemplate, getTemplatePageNumberOptions } from './editor/template/index'
 
 window.onload = function () {
   // 注册内置模板
@@ -75,6 +75,9 @@ window.onload = function () {
       onApply: schema => {
         const data = compileTemplate(schema)
         instance.command.executeSetValue(data)
+        instance.command.executeUpdateOptions({
+          pageNumber: getTemplatePageNumberOptions(schema)
+        })
       }
     })
   }
