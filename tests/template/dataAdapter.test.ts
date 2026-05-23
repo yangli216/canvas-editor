@@ -2,11 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createMockHisAdapter,
   createTemplateRuntime,
+  ElementType,
+  ListStyle,
+  ListType,
   TemplateDataAdapterRegistry,
   type ITemplateSchema
 } from '@/editor'
 
-function createMockEditor(initialValues: Record<string, string | null> = {}) {
+function createMockEditor(initialValues: Record<string, string | any[] | null> = {}) {
   const values = new Map(Object.entries(initialValues))
   return {
     values,
@@ -16,11 +19,16 @@ function createMockEditor(initialValues: Record<string, string | null> = {}) {
           if (!conceptId) return null
           const value = values.get(conceptId) ?? null
           return Array.isArray(value)
-            ? value.map(item => ({ value: item ?? null }))
+            ? value.map(item => ({
+                value:
+                  typeof item === 'object' && item !== null && 'value' in item
+                    ? item.value ?? null
+                    : item ?? null
+              }))
             : [{ value }]
         }),
         executeSetControlValueList: vi.fn(
-          (payload: Array<{ conceptId?: string; value: string | null }>) => {
+          (payload: Array<{ conceptId?: string; value: string | any[] | null }>) => {
             payload.forEach(item => {
               if (!item.conceptId) return
               values.set(item.conceptId, item.value ?? null)
@@ -137,6 +145,33 @@ const schema: ITemplateSchema = {
   ]
 }
 
+const listSchema: ITemplateSchema = {
+  version: '1.0.0',
+  id: 'his-list-test',
+  name: 'HIS 列表接入测试',
+  blocks: [
+    {
+      type: 'fieldRow',
+      fields: [
+        {
+          id: 'orderSummaryList',
+          type: 'textarea',
+          label: '处方列表',
+          metadata: {
+            businessCode: 'order.summaryList',
+            dataSource: 'his.order'
+          },
+          valueRender: {
+            mode: 'list',
+            listType: ListType.OL,
+            listStyle: ListStyle.DECIMAL
+          }
+        }
+      ]
+    }
+  ]
+}
+
 describe('template data adapter', () => {
   it('mock HIS adapter 能按 businessCode 解析病人数据', async () => {
     const { editor, values } = createMockEditor()
@@ -199,6 +234,33 @@ describe('template data adapter', () => {
       (structured.structuredByDataSource['emr.notes'] as Record<string, any>)
         ?.encounter?.subjective?.chiefComplaint
     ).toBe('咳嗽、咳痰伴发热 5 天')
+  })
+
+  it('adapter 返回数组值时，文本字段可按列表配置写入列表元素', async () => {
+    const { editor, values } = createMockEditor()
+    const adapter = createMockHisAdapter()
+    const registry = new TemplateDataAdapterRegistry()
+    registry.register(adapter)
+
+    const runtime = createTemplateRuntime(editor as any, listSchema)
+    const result = await runtime.applyAdapterValues({
+      registry,
+      context: { variables: { patientId: 'P-1001' } }
+    })
+
+    expect(result.appliedFieldIds).toEqual(['orderSummaryList'])
+    expect(values.get('orderSummaryList')).toEqual([
+      expect.objectContaining({
+        type: ElementType.LIST,
+        listType: ListType.OL,
+        listStyle: ListStyle.DECIMAL
+      }),
+      expect.objectContaining({
+        type: ElementType.LIST,
+        listType: ListType.OL,
+        listStyle: ListStyle.DECIMAL
+      })
+    ])
   })
 
   it('适配器注册表能按 dataSource 反查并支持取消注册', () => {

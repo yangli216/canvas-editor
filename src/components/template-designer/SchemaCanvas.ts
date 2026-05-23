@@ -4,6 +4,7 @@ import type {
   ITemplateParagraphBlock,
   ITemplateSectionBlock,
   ITemplateGroupBlock,
+  ITemplateSpacerBlock,
   ITemplateTableBlock,
   ITemplateStaticTextBlock,
   ITemplateField
@@ -55,6 +56,7 @@ const BLOCK_LABEL: Record<ITemplateBlock['type'], string> = {
   section: '分节',
   group: '组合',
   separator: '分隔线',
+  spacer: '留白',
   table: '表格',
   staticText: '静态文本'
 }
@@ -95,7 +97,7 @@ function remapFieldIds(block: ITemplateBlock) {
       if (col.field) col.field.id = genId()
     }
   }
-  // staticText and separator have no fields
+  // staticText, separator and spacer have no fields
 }
 
 function fieldHasRules(field: ITemplateField): boolean {
@@ -224,6 +226,8 @@ export class SchemaCanvas {
         }
       case 'separator':
         return { type: 'separator' }
+      case 'spacer':
+        return { type: 'spacer', lines: 1 }
       case 'table':
         return {
           type: 'table',
@@ -384,7 +388,9 @@ export class SchemaCanvas {
     if (parent?.type !== 'section' && parent?.type !== 'group') return null
     const invalidTypes = [...new Set(this._getPaletteDragTypes().filter(type => !canNestBlock(parent, type)))]
     if (!invalidTypes.length) return null
-    const parentLabel = parent.type === 'group' ? '组合' : '分节'
+    const parentLabel = parent.type === 'group'
+      ? ((parent.direction || 'column') === 'row' ? '横向组合' : '组合')
+      : '分节'
     return `${parentLabel}内不支持嵌套 ${invalidTypes.map(type => BLOCK_LABEL[type]).join('、')}`
   }
 
@@ -461,7 +467,9 @@ export class SchemaCanvas {
 
   private _renderBlockCard(block: ITemplateBlock, index: number): HTMLDivElement {
     const isSelected =
-      this.selection?.kind === 'block' && this.selection.blockIndex === index
+      this.selection?.kind === 'block' &&
+      this.selection.parentIndex == null &&
+      this.selection.blockIndex === index
 
     const card = document.createElement('div')
     card.className = `td-canvas__block${isSelected ? ' td-canvas__block--selected' : ''}`
@@ -555,6 +563,14 @@ export class SchemaCanvas {
     }
 
     if (block.type === 'group') {
+      const groupTitle = document.createElement('span')
+      groupTitle.className = 'td-canvas__block-title td-canvas__block-title--group'
+      const childCount = block.blocks.length
+      groupTitle.textContent = block.direction === 'row'
+        ? `${childCount} 个子块，同一行内排列`
+        : `${childCount} 个子块，上下顺序堆叠`
+      header.append(groupTitle)
+
       const directionTag = document.createElement('span')
       directionTag.className = `td-canvas__group-direction td-canvas__group-direction--${block.direction || 'column'}`
       directionTag.textContent = block.direction === 'row' ? '横向编排' : '纵向堆叠'
@@ -685,6 +701,9 @@ export class SchemaCanvas {
     if (block.type === 'table') {
       return this._renderTablePreview(block as ITemplateTableBlock, blockIndex, parentIndex)
     }
+    if (block.type === 'spacer') {
+      return this._renderSpacerPreview(block as ITemplateSpacerBlock)
+    }
     if (block.type === 'staticText') {
       return this._renderStaticTextPreview(block as ITemplateStaticTextBlock)
     }
@@ -729,6 +748,15 @@ export class SchemaCanvas {
     if (block.style?.italic) body.style.fontStyle = 'italic'
     if (block.align === 'center') body.style.textAlign = 'center'
     else if (block.align === 'right') body.style.textAlign = 'right'
+    return body
+  }
+
+  private _renderSpacerPreview(block: ITemplateSpacerBlock): HTMLDivElement {
+    const body = document.createElement('div')
+    body.className = 'td-canvas__spacer-preview'
+    const lines = Math.max(1, Math.floor(block.lines ?? 1))
+    body.textContent = `留白 ${lines} 行`
+    body.style.minHeight = `${Math.max(18, lines * 12)}px`
     return body
   }
 
@@ -798,15 +826,6 @@ export class SchemaCanvas {
     const isRow = groupDirection === 'row'
     body.className = `td-canvas__nested-body${isRow ? ' td-canvas__nested-body--row' : ''}${groupDirection ? ` td-canvas__nested-body--${groupDirection}` : ''}`
     body.addEventListener('click', e => e.stopPropagation())
-
-    if (groupDirection) {
-      const guide = document.createElement('div')
-      guide.className = `td-canvas__group-preview td-canvas__group-preview--${groupDirection}`
-      guide.textContent = groupDirection === 'row'
-        ? '横向组合：子块会在同一行内排列'
-        : '纵向组合：子块会按上下顺序堆叠'
-      body.append(guide)
-    }
 
     if (children.length === 0) {
       const empty = document.createElement('div')
@@ -924,7 +943,7 @@ export class SchemaCanvas {
         this.selection.parentIndex === parentIndex
 
       const childCard = document.createElement('div')
-      childCard.className = `td-canvas__nested-block${isChildSelected ? ' td-canvas__block--selected' : ''}${isRow ? ' td-canvas__nested-block--row' : ''}`
+      childCard.className = `td-canvas__nested-block${isChildSelected ? ' td-canvas__block--selected' : ''}${isRow ? ' td-canvas__nested-block--row' : ''}${isRow && child.type === 'staticText' ? ' td-canvas__nested-block--static-text' : ''}`
       childCard.draggable = true
       childCard.dataset.parentIndex = String(parentIndex)
       childCard.dataset.childIndex = String(childIndex)
@@ -952,7 +971,11 @@ export class SchemaCanvas {
         event.preventDefault()
         event.stopPropagation()
         clearNestedDragOver()
-        const placement = this._getDropPlacement(childCard, event.clientY, 'y')
+        const placement = this._getDropPlacement(
+          childCard,
+          isRow ? event.clientX : event.clientY,
+          isRow ? 'x' : 'y'
+        )
         childCard.classList.add(
           placement === 'after'
             ? 'td-canvas__block--drop-after'
@@ -974,7 +997,11 @@ export class SchemaCanvas {
         event.preventDefault()
         event.stopPropagation()
 
-        const placement = this._getDropPlacement(childCard, event.clientY, 'y')
+        const placement = this._getDropPlacement(
+          childCard,
+          isRow ? event.clientX : event.clientY,
+          isRow ? 'x' : 'y'
+        )
         clearNestedDragOver()
         let targetIndex = childIndex + (placement === 'after' ? 1 : 0)
 
@@ -1027,6 +1054,9 @@ export class SchemaCanvas {
           .join('')
       } else if (child.type === 'section') {
         summary.textContent = (child as ITemplateSectionBlock).title
+      } else if (child.type === 'spacer') {
+        const lines = Math.max(1, Math.floor((child as ITemplateSpacerBlock).lines ?? 1))
+        summary.textContent = `留白 ${lines} 行`
       } else if (child.type === 'table') {
         summary.textContent = `${(child as ITemplateTableBlock).columns.length} 列`
       } else if (child.type === 'staticText') {
@@ -1055,6 +1085,9 @@ export class SchemaCanvas {
       childHeader.append(label, summary, childActions)
       childCard.append(childHeader)
       const childBody = this._renderBlockBody(child, childIndex, parentIndex)
+      if (childBody && isRow && child.type === 'staticText') {
+        childBody.classList.add('td-canvas__static-text-preview--nested-row')
+      }
       if (childBody) childCard.append(childBody)
       body.append(childCard)
     })

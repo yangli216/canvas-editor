@@ -5,6 +5,8 @@ import {
   DEFAULT_SEPARATOR_OFFSET_Y,
   ElementType,
   getTemplatePageNumberOptions,
+  ListStyle,
+  ListType,
   TitleLevel,
   TEMPLATE_SYSTEM_VARIABLES,
   type ITemplateSchema
@@ -134,6 +136,32 @@ describe('template compiler', () => {
     ])
   })
 
+
+  it('字段行 label 保持在控件外侧，并带不可编辑不可删除标记', () => {
+    const result = compileTemplate(schema)
+    const nameControl = result.main.find(
+      element =>
+        element.type === ElementType.CONTROL &&
+        element.control?.conceptId === 'patientName'
+    )
+    const fieldLabel = result.main.find(
+      element =>
+        element.type !== ElementType.CONTROL &&
+        element.extension &&
+        typeof element.extension === 'object' &&
+        'template' in element.extension &&
+        (element.extension as { template?: { fieldId?: string } }).template?.fieldId === 'patientName' &&
+        element.value.includes('姓名')
+    )
+
+    expect(nameControl?.control?.preText).toBeUndefined()
+    expect(fieldLabel?.value).toBe('姓名：')
+    expect(fieldLabel?.title).toMatchObject({
+      disabled: true,
+      deletable: false
+    })
+    expect(fieldLabel?.titleId).toBe('template-field-label-patientName')
+  })
   it('字段宽度留空时按内容自适应，枚举字段会按选项文本估算初始最小宽度', () => {
     const result = compileTemplate({
       ...schema,
@@ -208,6 +236,10 @@ describe('template compiler', () => {
     expect(adaptiveText?.control?.minWidth).toBeUndefined()
     expect(adaptiveRadio?.control?.minWidth).toBe(154)
     expect(sizedSelect?.control?.minWidth).toBe(202)
+    expect(sizedSelect?.control?.prefix).toBeUndefined()
+    expect(sizedSelect?.control?.postfix).toBeUndefined()
+    expect(sizedSelect?.control?.preText).toBe('左')
+    expect(sizedSelect?.control?.postText).toBe('右')
     expect(fixedSelect?.control?.minWidth).toBe(180)
   })
 
@@ -246,6 +278,49 @@ describe('template compiler', () => {
 
     expect(plainText?.control?.underline).toBe(false)
     expect(underlinedText?.control?.underline).toBe(true)
+  })
+
+  it('文本字段的数组默认值可按列表方式编译', () => {
+    const result = compileTemplate({
+      ...schema,
+      blocks: [
+        {
+          type: 'fieldRow',
+          fields: [
+            {
+              id: 'diagnosisList',
+              type: 'textarea',
+              label: '诊断',
+              defaultValue: ['冠心病', '2 型糖尿病'],
+              valueRender: {
+                mode: 'list',
+                listType: ListType.UL,
+                listStyle: ListStyle.DISC
+              }
+            }
+          ]
+        }
+      ]
+    })
+
+    const diagnosisControl = result.main.find(
+      element =>
+        element.type === ElementType.CONTROL &&
+        element.control?.conceptId === 'diagnosisList'
+    )
+
+    expect(Array.isArray(diagnosisControl?.control?.value)).toBe(true)
+    expect(diagnosisControl?.control?.value).toHaveLength(2)
+    expect(diagnosisControl?.control?.value?.[0]).toMatchObject({
+      type: ElementType.LIST,
+      listType: ListType.UL,
+      listStyle: ListStyle.DISC
+    })
+    expect(diagnosisControl?.control?.value?.[1]).toMatchObject({
+      type: ElementType.LIST,
+      listType: ListType.UL,
+      listStyle: ListStyle.DISC
+    })
   })
 
   it('section 会编译为标题元素，并把规则写进 extension.template', () => {
@@ -306,6 +381,78 @@ describe('template compiler', () => {
 
     expect(withBreak.main[breakTitleIndex + 1]?.value).toBe('\n')
     expect(withoutBreak.main[noBreakTitleIndex + 1]?.value).toBe('内容B')
+  })
+
+  it('分节默认不再额外插入空白行，并支持显式配置段后间距', () => {
+    const compact = compileTemplate({
+      ...schema,
+      blocks: [
+        {
+          type: 'section',
+          title: '紧凑分节',
+          blocks: [{ type: 'paragraph', segments: [{ type: 'text', value: '内容A' }] }]
+        },
+        {
+          type: 'paragraph',
+          lineBreak: false,
+          segments: [{ type: 'text', value: '内容B' }]
+        }
+      ]
+    })
+    const spaced = compileTemplate({
+      ...schema,
+      blocks: [
+        {
+          type: 'section',
+          title: '带间距分节',
+          spacing: 1,
+          blocks: [{ type: 'paragraph', segments: [{ type: 'text', value: '内容C' }] }]
+        },
+        {
+          type: 'paragraph',
+          lineBreak: false,
+          segments: [{ type: 'text', value: '内容D' }]
+        }
+      ]
+    })
+
+    const compactIndex = compact.main.findIndex(element => element.value === '内容A')
+    const spacedIndex = spaced.main.findIndex(element => element.value === '内容C')
+
+    expect(compact.main[compactIndex + 1]?.value).toBe('\n')
+    expect(compact.main[compactIndex + 2]?.value).toBe('内容B')
+    expect(spaced.main[spacedIndex + 1]?.value).toBe('\n')
+    expect(spaced.main[spacedIndex + 2]?.value).toBe('\n')
+    expect(spaced.main[spacedIndex + 3]?.value).toBe('内容D')
+  })
+
+  it('spacer 会按空行数插入留白，不改变前后内容顺序', () => {
+    const result = compileTemplate({
+      ...schema,
+      blocks: [
+        {
+          type: 'staticText',
+          text: '上方内容'
+        },
+        {
+          type: 'spacer',
+          lines: 2
+        },
+        {
+          type: 'paragraph',
+          lineBreak: false,
+          segments: [{ type: 'text', value: '下方内容' }]
+        }
+      ]
+    })
+
+    expect(result.main.slice(0, 5).map(element => element.value)).toEqual([
+      '上方内容',
+      '\n',
+      '\n',
+      '\n',
+      '下方内容'
+    ])
   })
 
   it('分割线在未显式配置时使用默认上移偏移量', () => {

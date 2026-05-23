@@ -2,6 +2,7 @@ import { FlexDirection } from '../dataset/enum/Common'
 import { ControlType } from '../dataset/enum/Control'
 import { FORMAT_PLACEHOLDER } from '../dataset/constant/PageNumber'
 import { ElementType } from '../dataset/enum/Element'
+import { ListStyle, ListType } from '../dataset/enum/List'
 import { RowFlex } from '../dataset/enum/Row'
 import { TitleLevel } from '../dataset/enum/Title'
 import type { IControl, IValueSet } from '../interface/Control'
@@ -9,6 +10,7 @@ import type { IEditorData } from '../interface/Editor'
 import type { IElement } from '../interface/Element'
 import type { IPageNumber } from '../interface/PageNumber'
 import type { ITr } from '../interface/table/Tr'
+import { normalizeTemplateFieldValue } from './TemplateValueRender'
 
 export type TemplateFieldType =
   | 'text'
@@ -67,6 +69,14 @@ export interface ITemplateFieldMetadata {
   tags?: string[]
 }
 
+export type TemplateFieldValueRenderMode = 'plain' | 'list'
+
+export interface ITemplateFieldValueRender {
+  mode?: TemplateFieldValueRenderMode
+  listType?: ListType
+  listStyle?: ListStyle
+}
+
 export interface ITemplateField {
   id: string
   type: TemplateFieldType
@@ -86,6 +96,7 @@ export interface ITemplateField {
   deletable?: boolean
   min?: number
   max?: number
+  valueRender?: ITemplateFieldValueRender
   metadata?: ITemplateFieldMetadata
   rules?: ITemplateRule[]
   style?: Pick<
@@ -151,6 +162,7 @@ export interface ITemplateSectionBlock {
   align?: 'left' | 'center' | 'right'
   level?: TitleLevel
   titleLineBreak?: boolean
+  spacing?: number
   titleStyle?: Partial<IElement>
   blocks: ITemplateBlock[]
   rules?: ITemplateRule[]
@@ -165,6 +177,11 @@ export interface ITemplateSeparatorBlock {
   align?: 'left' | 'center' | 'right'
   spacing?: number
   offsetY?: number
+}
+
+export interface ITemplateSpacerBlock {
+  type: 'spacer'
+  lines?: number
 }
 
 export interface ITemplateTableColumn {
@@ -206,6 +223,7 @@ export type ITemplateBlock =
   | ITemplateGroupBlock
   | ITemplateSectionBlock
   | ITemplateSeparatorBlock
+  | ITemplateSpacerBlock
   | ITemplateTableBlock
   | ITemplateStaticTextBlock
 
@@ -261,7 +279,7 @@ const DEFAULT_LAYOUT: Required<
 > = {
   labelSuffix: '：',
   fieldSeparator: '    ',
-  sectionSpacing: 1,
+  sectionSpacing: 0,
   textareaWidth: 320,
   defaultFont: 'SimSun',
   defaultFontSize: 14
@@ -329,6 +347,29 @@ function createTextElement(
   }
 }
 
+function createLockedLabelElement(
+  ctx: ITemplateContext,
+  field: ITemplateField,
+  blockType: ITemplateBlock['type']
+): IElement {
+  return createTextElement(
+    `${field.label}${ctx.layout.labelSuffix}`,
+    {
+      titleId: `template-field-label-${field.id}`,
+      title: {
+        disabled: true,
+        deletable: false
+      }
+    },
+    createTemplateExtension(ctx, {
+      blockType,
+      fieldId: field.id,
+      fieldType: field.type,
+      rules: field.rules
+    })
+  )
+}
+
 function createNewline(count = 1): IElement[] {
   return Array.from({ length: count }, () => ({ value: '\n' }))
 }
@@ -339,6 +380,16 @@ function trimTrailingNewline(elementList: IElement[]): IElement[] {
     next.pop()
   }
   return next
+}
+
+function appendCompiledBlock(target: IElement[], blockElements: IElement[]) {
+  if (!blockElements.length) return
+  if (blockElements[0].type === ElementType.SEPARATOR) {
+    while (target.length && target[target.length - 1].value === '\n') {
+      target.pop()
+    }
+  }
+  target.push(...blockElements)
 }
 
 function formatRuntimePrintTime(value?: Date | string): string {
@@ -447,14 +498,11 @@ function createValueSets(options: ITemplateOption[] = []): IValueSet[] {
 
 function createControlValue(value: string | string[] | null | undefined) {
   if (value == null) return null
-  const content = Array.isArray(value) ? value.join('、') : value
-  return content
-    ? [
-        {
-          value: content
-        }
-      ]
-    : null
+  return [
+    {
+      value
+    }
+  ]
 }
 
 function estimateTextWidth(text: string, fontSize: number) {
@@ -502,6 +550,11 @@ function mapFieldTypeToControlType(type: TemplateFieldType): ControlType {
   }
 }
 
+function mergeFieldAffixText(...parts: Array<string | undefined>) {
+  const text = parts.filter(Boolean).join('')
+  return text || undefined
+}
+
 function createControlElement(
   ctx: ITemplateContext,
   field: ITemplateField,
@@ -516,13 +569,17 @@ function createControlElement(
   ]
   const control: IControl = {
     type: controlType,
-    value: createControlValue(field.defaultValue),
+    value: (() => {
+      const normalizedValue = normalizeTemplateFieldValue(field, field.defaultValue)
+      if (normalizedValue == null) return null
+      return Array.isArray(normalizedValue)
+        ? normalizedValue
+        : createControlValue(normalizedValue)
+    })(),
     conceptId: field.id,
     placeholder: field.placeholder,
-    prefix: field.prefix,
-    postfix: field.postfix,
-    preText: field.preText,
-    postText: field.postText,
+    preText: mergeFieldAffixText(field.preText, field.prefix),
+    postText: mergeFieldAffixText(field.postfix, field.postText),
     minWidth:
       field.width ||
       field.style?.minWidth ||
@@ -579,16 +636,18 @@ function createFieldElements(
   const elementList: IElement[] = []
   if (field.label) {
     elementList.push(
-      createTextElement(
-        `${field.label}${ctx.layout.labelSuffix}`,
-        {},
-        createTemplateExtension(ctx, {
-          blockType,
-          fieldId: field.id,
-          fieldType: field.type,
-          rules: field.rules
-        })
-      )
+      blockType === 'fieldRow'
+        ? createLockedLabelElement(ctx, field, blockType)
+        : createTextElement(
+            `${field.label}${ctx.layout.labelSuffix}`,
+            {},
+            createTemplateExtension(ctx, {
+              blockType,
+              fieldId: field.id,
+              fieldType: field.type,
+              rules: field.rules
+            })
+          )
     )
   }
   elementList.push(createControlElement(ctx, field, blockType))
@@ -712,7 +771,7 @@ function compileGroupBlock(
 
   const elementList: IElement[] = []
   block.blocks.forEach((child, index) => {
-    elementList.push(...compileTemplateBlock(childCtx, child))
+    appendCompiledBlock(elementList, compileTemplateBlock(childCtx, child))
     if (index < block.blocks.length - 1) {
       const lastElement = elementList[elementList.length - 1]
       if (lastElement?.value !== '\n') {
@@ -735,9 +794,12 @@ function compileSectionBlock(
     elementList.push(...createNewline())
   }
   for (const child of block.blocks) {
-    elementList.push(...compileTemplateBlock(childCtx, child))
+    appendCompiledBlock(elementList, compileTemplateBlock(childCtx, child))
   }
-  elementList.push(...createNewline(ctx.layout.sectionSpacing))
+  const spacing = block.spacing ?? ctx.layout.sectionSpacing
+  if (spacing > 0) {
+    elementList.push(...createNewline(spacing))
+  }
   return elementList
 }
 
@@ -840,6 +902,17 @@ function compileStaticTextBlock(
   return elements
 }
 
+function compileSpacerBlock(
+  ctx: ITemplateContext,
+  block: ITemplateSpacerBlock
+): IElement[] {
+  const lines = Math.max(1, Math.floor(block.lines ?? 1))
+  return createNewline(lines).map(element => ({
+    ...element,
+    extension: createTemplateExtension(ctx, { blockType: block.type })
+  }))
+}
+
 export function compileTemplateBlock(
   ctx: ITemplateContext,
   block: ITemplateBlock
@@ -855,6 +928,8 @@ export function compileTemplateBlock(
       return compileSectionBlock(ctx, block)
     case 'separator':
       return compileSeparatorBlock(ctx, block)
+    case 'spacer':
+      return compileSpacerBlock(ctx, block)
     case 'table':
       return compileTableBlock(ctx, block)
     case 'staticText':
@@ -995,9 +1070,18 @@ export function compileTemplate(
       operatorName: options.runtime?.operatorName || schema.layout?.footerRuntime?.operatorName
     }
   }
-  const header = (schema.header || []).flatMap(block => compileTemplateBlock(ctx, block))
-  const main = schema.blocks.flatMap(block => compileTemplateBlock(ctx, block))
-  const footer = (schema.footer || []).flatMap(block => compileTemplateBlock(ctx, block))
+  const header = (schema.header || []).reduce<IElement[]>((elementList, block) => {
+    appendCompiledBlock(elementList, compileTemplateBlock(ctx, block))
+    return elementList
+  }, [])
+  const main = schema.blocks.reduce<IElement[]>((elementList, block) => {
+    appendCompiledBlock(elementList, compileTemplateBlock(ctx, block))
+    return elementList
+  }, [])
+  const footer = (schema.footer || []).reduce<IElement[]>((elementList, block) => {
+    appendCompiledBlock(elementList, compileTemplateBlock(ctx, block))
+    return elementList
+  }, [])
   if (header.length && options.headerRowFlex) {
     header.forEach(element => {
       if (element.value !== '\n') {

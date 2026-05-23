@@ -6,6 +6,7 @@ import type {
   ITemplateGroupBlock,
   ITemplateParagraphBlock,
   ITemplateFieldRowBlock,
+  ITemplateSpacerBlock,
   ITemplateStaticTextBlock,
   ITemplateTableBlock
 } from '../../editor/template/index'
@@ -28,6 +29,7 @@ const BLOCK_LABEL: Record<ITemplateBlock['type'], string> = {
   section: '分节',
   group: '组合',
   separator: '分隔线',
+  spacer: '留白',
   table: '表格',
   staticText: '静态文本'
 }
@@ -665,6 +667,10 @@ export class StructureTree {
     if (block.type === 'staticText') {
       const text = (block as ITemplateStaticTextBlock).text || ''
       return text.slice(0, 28) || '静态文本'
+    }
+    if (block.type === 'spacer') {
+      const lines = Math.max(1, Math.floor((block as ITemplateSpacerBlock).lines ?? 1))
+      return `留白 ${lines} 行`
     }
     return BLOCK_LABEL[block.type]
   }

@@ -2,10 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildTemplateFieldRuntimeIndex,
   createTemplateRuntime,
+  ElementType,
+  ListStyle,
+  ListType,
   type ITemplateSchema
 } from '@/editor'
 
-function createMockEditor(initialValues: Record<string, string | string[] | null>) {
+function createMockEditor(initialValues: Record<string, string | string[] | any[] | null>) {
   const values = new Map(Object.entries(initialValues))
   const subscriptions = new Map<string, Set<(payload: any) => void>>()
 
@@ -17,10 +20,15 @@ function createMockEditor(initialValues: Record<string, string | string[] | null
           if (!conceptId) return null
           const value = values.get(conceptId) ?? null
           return Array.isArray(value)
-            ? value.map(item => ({ value: item ?? null }))
+            ? value.map(item => ({
+                value:
+                  typeof item === 'object' && item !== null && 'value' in item
+                    ? item.value ?? null
+                    : item ?? null
+              }))
             : [{ value }]
         }),
-        executeSetControlValueList: vi.fn((payload: Array<{ conceptId?: string; value: string | null }>) => {
+        executeSetControlValueList: vi.fn((payload: Array<{ conceptId?: string; value: string | any[] | null }>) => {
           payload.forEach(item => {
             if (!item.conceptId) return
             values.set(item.conceptId, item.value ?? null)
@@ -420,6 +428,63 @@ describe('template runtime', () => {
         ]
       })
     ]))
+  })
+
+  it('文本类字段可把数组值写成项目符号列表元素', () => {
+    const { editor } = createMockEditor({})
+    const runtime = createTemplateRuntime(editor as any, {
+      version: '1.0.0',
+      id: 'list-runtime',
+      name: '列表运行时',
+      blocks: [
+        {
+          type: 'fieldRow',
+          fields: [
+            {
+              id: 'diagnosisList',
+              type: 'textarea',
+              metadata: {
+                businessCode: 'diagnosis.list',
+                dataSource: 'his.diagnosis'
+              },
+              valueRender: {
+                mode: 'list',
+                listType: ListType.UL,
+                listStyle: ListStyle.DISC
+              }
+            }
+          ]
+        }
+      ]
+    })
+
+    const result = runtime.setValues([
+      {
+        fieldId: 'diagnosisList',
+        value: ['冠状动脉粥样硬化性心脏病', '2 型糖尿病']
+      }
+    ])
+
+    expect(result.appliedFieldIds).toEqual(['diagnosisList'])
+    expect(editor.command.executeSetControlValueList).toHaveBeenCalledTimes(1)
+    expect(editor.command.executeSetControlValueList).toHaveBeenCalledWith([
+      {
+        conceptId: 'diagnosisList',
+        value: [
+          expect.objectContaining({
+            type: ElementType.LIST,
+            listType: ListType.UL,
+            listStyle: ListStyle.DISC
+          }),
+          expect.objectContaining({
+            type: ElementType.LIST,
+            listType: ListType.UL,
+            listStyle: ListStyle.DISC
+          })
+        ],
+        isSubmitHistory: undefined
+      }
+    ])
   })
 
   it('TemplateRuntime 支持字段级与分组级监听', () => {

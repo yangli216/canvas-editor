@@ -230,6 +230,10 @@ const MOCK_FIELD_RESOLVERS: Record<
   'diagnosis.primary': patient => patient.diagnosis.primary,
   'diagnosis.secondary': patient => patient.diagnosis.secondary ?? '',
   'diagnosis.icdCode': patient => patient.diagnosis.icdCode ?? '',
+  'diagnosis.list': patient => [
+    patient.diagnosis.primary,
+    patient.diagnosis.secondary
+  ].filter(Boolean) as string[],
   'vitals.temperature': patient => patient.vitals?.temperature ?? '',
   'vitals.pulse': patient => patient.vitals?.pulse ?? '',
   'vitals.breathing': patient => patient.vitals?.breathing ?? '',
@@ -239,6 +243,12 @@ const MOCK_FIELD_RESOLVERS: Record<
   'exam.finding': patient => patient.exam?.finding ?? '',
   'exam.reportTime': patient => patient.exam?.reportTime ?? '',
   'order.name': patient => patient.orders?.map(order => order.name) ?? [],
+  'order.summaryList': patient =>
+    patient.orders?.map(order =>
+      [order.name, order.dose, order.frequency, order.route]
+        .filter(Boolean)
+        .join(' ')
+    ) ?? [],
   'order.dose': patient => patient.orders?.map(order => order.dose) ?? [],
   'order.frequency': patient => patient.orders?.map(order => order.frequency) ?? [],
   'order.route': patient => patient.orders?.map(order => order.route) ?? [],

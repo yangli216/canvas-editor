@@ -1,4 +1,5 @@
 import { TitleLevel } from '../../dataset/enum/Title'
+import { ListStyle, ListType } from '../../dataset/enum/List'
 import type { ITemplateSchema } from '../index'
 
 export const admissionRecordTemplate: ITemplateSchema = {
@@ -283,6 +284,70 @@ export const admissionRecordTemplate: ITemplateSchema = {
                 type: 'textarea',
                 placeholder: '请输入初步诊断',
                 width: 520
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      type: 'section',
+      title: '诊断与当前处方示例',
+      level: TitleLevel.FIRST,
+      blocks: [
+        {
+          type: 'paragraph',
+          segments: [
+            {
+              type: 'field',
+              field: {
+                id: 'diagnosisList',
+                type: 'textarea',
+                label: '诊断列表',
+                placeholder: '按项目符号展示多条诊断',
+                width: 520,
+                defaultValue: ['冠状动脉粥样硬化性心脏病', '2 型糖尿病'],
+                valueRender: {
+                  mode: 'list',
+                  listType: ListType.UL,
+                  listStyle: ListStyle.DISC
+                },
+                metadata: {
+                  businessCode: 'diagnosis.list',
+                  dataSource: 'his.diagnosis',
+                  exportPath: 'encounter.diagnosis.list',
+                  group: 'diagnosis'
+                }
+              }
+            }
+          ]
+        },
+        {
+          type: 'paragraph',
+          segments: [
+            {
+              type: 'field',
+              field: {
+                id: 'orderSummaryList',
+                type: 'textarea',
+                label: '当前处方',
+                placeholder: '按项目编号展示多条处方摘要',
+                width: 520,
+                defaultValue: [
+                  '阿司匹林肠溶片 100mg qd 口服',
+                  '阿托伐他汀钙片 20mg qn 口服'
+                ],
+                valueRender: {
+                  mode: 'list',
+                  listType: ListType.OL,
+                  listStyle: ListStyle.DECIMAL
+                },
+                metadata: {
+                  businessCode: 'order.summaryList',
+                  dataSource: 'his.order',
+                  exportPath: 'encounter.orders.summaryList',
+                  group: 'orders'
+                }
               }
             }
           ]

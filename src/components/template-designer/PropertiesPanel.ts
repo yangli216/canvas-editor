@@ -9,6 +9,7 @@ import type {
   ITemplateTableColumn,
   ITemplateStaticTextBlock,
   ITemplateSeparatorBlock,
+  ITemplateSpacerBlock,
   ITemplateRule,
   ITemplateCondition,
   ITemplateOption,
@@ -167,6 +168,22 @@ function textareaInput(
     withChangePhase('commit', () => onChange(ta.value))
   })
   return ta
+}
+
+function normalizeListRender(
+  render: ITemplateField['valueRender'] | undefined
+): NonNullable<ITemplateField['valueRender']> {
+  const listType = render?.listType ?? 'ul'
+  const listStyle = listType === 'ol'
+    ? 'decimal'
+    : render?.listStyle === 'circle' || render?.listStyle === 'square'
+      ? render.listStyle
+      : 'disc'
+  return {
+    mode: 'list',
+    listType,
+    listStyle
+  }
 }
 
 function card(title: string, children: HTMLElement[], help?: string): HTMLDivElement {
@@ -523,6 +540,9 @@ export class PropertiesPanel {
         checkboxInput('标题后换行', sec.titleLineBreak ?? true, v =>
           onChange({ ...sec, titleLineBreak: v })
         ),
+        row('段后间距', numberInput(sec.spacing, v =>
+          onChange({ ...sec, spacing: v })
+        ), '默认 0，不额外插空行'),
         row('标题字号', numberInput(sec.titleStyle?.size, v =>
           onChange({ ...sec, titleStyle: { ...sec.titleStyle, size: v } })
         ), '继承默认'),
@@ -609,6 +629,10 @@ export class PropertiesPanel {
       this.container.append(this._renderSeparatorEditor(block as ITemplateSeparatorBlock, onChange))
     }
 
+    if (block.type === 'spacer') {
+      this.container.append(this._renderSpacerEditor(block as ITemplateSpacerBlock, onChange))
+    }
+
     if (block.type === 'table') {
       const tb = block as ITemplateTableBlock
       this.container.append(card('表格版式', [
@@ -672,6 +696,38 @@ export class PropertiesPanel {
       row('上下留白', numberInput(block.spacing, v => onChange({ ...block, spacing: v }), '默认')),
       row('垂直偏移', numberInput(block.offsetY, v => onChange({ ...block, offsetY: v }), '默认'))
     ], '常用文书分割线可先套预设，再精调颜色、长度和偏移。')
+  }
+
+  private _renderSpacerEditor(
+    block: ITemplateSpacerBlock,
+    onChange: (updated: ITemplateBlock) => void
+  ): HTMLDivElement {
+    const presets = el('div', 'td-props__preset-grid')
+    const presetItems = [
+      { label: '小留白', desc: '1 行，轻量分隔', lines: 1 },
+      { label: '中留白', desc: '2 行，常规间隔', lines: 2 },
+      { label: '大留白', desc: '4 行，明显留区', lines: 4 }
+    ]
+
+    presetItems.forEach(item => {
+      const btn = el('button', 'td-props__preset-card')
+      btn.type = 'button'
+      const label = el('strong')
+      label.textContent = item.label
+      const desc = el('span')
+      desc.textContent = item.desc
+      btn.append(label, desc)
+      btn.addEventListener('click', () => onChange({ ...block, lines: item.lines }))
+      presets.append(btn)
+    })
+
+    return card('留白块', [
+      presets,
+      row('空行数', numberInput(block.lines, v => {
+        const lines = v == null ? undefined : Math.max(1, Math.floor(v))
+        onChange({ ...block, lines })
+      }, '默认 1'), '按空行数插入留白，适合隔开上下内容。')
+    ], '留白块会编译成纯空白行，适合正文流里的间隔区域，不负责贴底布局。')
   }
 
   // ── Paragraph segments editor ──────────────────────────────────────────────
@@ -1008,11 +1064,6 @@ export class PropertiesPanel {
       ),
       row('标签', textInput(field.label ?? '', v => onChange({ ...field, label: v || undefined }), '展示名称')),
       row('占位符', textInput(field.placeholder ?? '', v => onChange({ ...field, placeholder: v || undefined }), '请输入')),
-      row('默认值', textInput(
-        Array.isArray(field.defaultValue) ? field.defaultValue.join(',') : field.defaultValue ?? '',
-        v => onChange({ ...field, defaultValue: v || undefined }),
-        '留空无默认值'
-      )),
       row('宽度', numberInput(field.width, v => onChange({ ...field, width: v }), '留空自适应'), '留空按内容自适应；仅明确配置 width 时固定宽度。'),
       row('最小宽度', numberInput(field.style?.minWidth, v =>
         onChange({ ...field, style: { ...field.style, minWidth: v } }), '留空自适应'
@@ -1026,6 +1077,111 @@ export class PropertiesPanel {
       checkboxInput('隐藏', field.hidden ?? false, v => onChange({ ...field, hidden: v })),
       checkboxInput('下划线', field.underline ?? false, v => onChange({ ...field, underline: v }))
     ], '字段基础语义影响设计期、运行期和结构化导出。'))
+
+    const isListRenderableField = field.type === 'text' || field.type === 'textarea'
+    if (isListRenderableField) {
+      const renderMode = field.valueRender?.mode ?? 'plain'
+      const listRender = normalizeListRender(field.valueRender)
+      const defaultValueControl = renderMode === 'list'
+        ? textareaInput(
+            Array.isArray(field.defaultValue)
+              ? field.defaultValue.join('\n')
+              : field.defaultValue ?? '',
+            value => {
+              const list = value
+                .split('\n')
+                .map(item => item.trim())
+                .filter(Boolean)
+              onChange({
+                ...field,
+                defaultValue: list.length ? list : undefined
+              })
+            },
+            '每行一个默认值'
+          )
+        : textInput(
+            Array.isArray(field.defaultValue)
+              ? field.defaultValue.join(',')
+              : field.defaultValue ?? '',
+            value => onChange({ ...field, defaultValue: value || undefined }),
+            '留空无默认值'
+          )
+
+      this.container.append(card('值显示', [
+        row(
+          '显示方式',
+          selectInput(
+            [
+              { label: '普通文本', value: 'plain' },
+              { label: '列表展示', value: 'list' }
+            ],
+            renderMode,
+            value => onChange({
+              ...field,
+              valueRender: value === 'list' ? listRender : undefined
+            })
+          )
+        ),
+        ...(renderMode === 'list'
+          ? [
+              row(
+                '列表类型',
+                selectInput(
+                  [
+                    { label: '项目符号', value: 'ul' },
+                    { label: '项目编号', value: 'ol' }
+                  ],
+                  listRender.listType,
+                  value => {
+                    const listType = value as 'ul' | 'ol'
+                    onChange({
+                      ...field,
+                      valueRender: {
+                        ...listRender,
+                        listType,
+                        listStyle: listType === 'ol'
+                          ? 'decimal'
+                          : listRender.listStyle === 'circle' || listRender.listStyle === 'square'
+                            ? listRender.listStyle
+                            : 'disc'
+                      }
+                    })
+                  }
+                )
+              ),
+              row(
+                '列表样式',
+                selectInput(
+                  listRender.listType === 'ol'
+                    ? [{ label: '阿拉伯数字', value: 'decimal' }]
+                    : [
+                        { label: '实心圆点', value: 'disc' },
+                        { label: '空心圆点', value: 'circle' },
+                        { label: '方块', value: 'square' }
+                      ],
+                  listRender.listStyle,
+                  value => onChange({
+                    ...field,
+                    valueRender: {
+                      ...listRender,
+                      listStyle: value as 'disc' | 'circle' | 'square' | 'decimal'
+                    }
+                  })
+                )
+              ),
+              row('列表默认值', defaultValueControl, '每行一条；运行时业务回填数组时也会按此配置展示。')
+            ]
+          : [row('默认值', defaultValueControl, '留空无默认值')])
+      ], '文本和多行文本字段可把多条值渲染为多行项目符号或编号列表。'))
+    } else {
+      this.container.append(card('值显示', [
+        row('默认值', textInput(
+          Array.isArray(field.defaultValue) ? field.defaultValue.join(',') : field.defaultValue ?? '',
+          value => onChange({ ...field, defaultValue: value || undefined }),
+          '留空无默认值'
+        ))
+      ], '当前字段类型仅支持普通文本默认值。'))
+    }
 
     // Font / style settings
     const fieldFontOpts = [

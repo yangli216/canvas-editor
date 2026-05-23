@@ -103,6 +103,7 @@ import {
 } from './template/TemplateRuntime'
 import type {
   ITemplateFieldSelector,
+  ITemplateRuntimeValuePatch,
   ITemplateRuntimeWriteResult,
   ITemplateRuntimeAdapterApplyOptions,
   ITemplateRuntimeAdapterApplyResult,
@@ -133,6 +134,7 @@ import type {
   ITemplateCondition,
   TemplateConditionFieldSource,
   ITemplateField,
+  ITemplateFieldValueRender,
   ITemplateFieldMetadata,
   ITemplateFieldRowBlock,
   ITemplateFieldSegment,
@@ -145,8 +147,10 @@ import type {
   ITemplateSectionBlock,
   ITemplateSegment,
   ITemplateSeparatorBlock,
+  ITemplateSpacerBlock,
   ITemplateTextSegment,
   TemplateConditionOperator,
+  TemplateFieldValueRenderMode,
   TemplateFieldType,
   TemplateRuleType
 } from './template'
@@ -332,6 +336,7 @@ export type {
   ITemplateCondition,
   TemplateConditionFieldSource,
   ITemplateField,
+  ITemplateFieldValueRender,
   ITemplateFieldMetadata,
   ITemplateFieldRowBlock,
   ITemplateFieldSegment,
@@ -344,6 +349,7 @@ export type {
   ITemplateSectionBlock,
   ITemplateSegment,
   ITemplateSeparatorBlock,
+  ITemplateSpacerBlock,
   ITemplateTextSegment,
   ITemplateDocumentContent,
   ITemplateDocumentMigrationFieldIssue,
@@ -354,6 +360,7 @@ export type {
   ITemplateDocumentRecord,
   ITemplateDocumentTemplateBinding,
   ITemplateFieldSelector,
+  ITemplateRuntimeValuePatch,
   ITemplateRuntimeWriteResult,
   ITemplateRuntimeAdapterApplyOptions,
   ITemplateRuntimeAdapterApplyResult,
@@ -373,6 +380,7 @@ export type {
   TemplateDocumentMigrationMatchMode,
   TemplateDocumentStatus,
   TemplateConditionOperator,
+  TemplateFieldValueRenderMode,
   TemplateFieldType,
   TemplateRuleType
 }

@@ -13,6 +13,7 @@ export const MAIN_BLOCK_TYPES: Array<ITemplateBlock['type']> = [
   'paragraph',
   'fieldRow',
   'separator',
+  'spacer',
   'table'
 ]
 
@@ -22,13 +23,16 @@ const NESTED_BLOCK_TYPES: Array<ITemplateBlock['type']> = [
   'paragraph',
   'fieldRow',
   'separator',
+  'spacer',
   'table'
 ]
 
 export function getAllowedNestedBlockTypes(
   parent: NestedParent
 ): Array<ITemplateBlock['type']> {
-  void parent
+  if (parent.type === 'group' && parent.direction === 'row') {
+    return NESTED_BLOCK_TYPES.filter(type => type !== 'spacer')
+  }
   return [...NESTED_BLOCK_TYPES]
 }
 

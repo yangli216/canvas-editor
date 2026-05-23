@@ -11,6 +11,7 @@ import {
   extractTemplateValues,
   type ITemplateExtractResult
 } from './TemplateValueExtractor'
+import { normalizeTemplateFieldValue } from './TemplateValueRender'
 import {
   templateDataAdapterRegistry,
   type ITemplateDataAdapter,
@@ -62,7 +63,7 @@ export interface ITemplateFieldSelector {
 export interface ITemplateRuntimeValuePatch {
   fieldId?: string
   businessCode?: string
-  value: string | IElement[] | null
+  value: string | string[] | IElement[] | null
   isSubmitHistory?: boolean
 }
 
@@ -741,18 +742,21 @@ export class TemplateRuntime {
           skippedKeys.push(item.fieldId)
           return
         }
-        const value = item.value
+        const value = normalizeTemplateFieldValue(node.field, item.value)
         if (
           skipEmpty &&
-          (value == null || (typeof value === 'string' && value.length === 0))
+          (
+            value == null ||
+            (typeof value === 'string' && value.length === 0) ||
+            (Array.isArray(value) && value.length === 0)
+          )
         ) {
           skippedKeys.push(item.fieldId)
           return
         }
-        const flatValue = Array.isArray(value) ? value.join('、') : value
         payload.push({
           conceptId: node.field.id,
-          value: flatValue,
+          value,
           isSubmitHistory: options.isSubmitHistory ?? false
         })
         appliedFieldIds.add(node.field.id)
@@ -781,7 +785,7 @@ export class TemplateRuntime {
 
   setValuesBySelector(
     selector: ITemplateFieldSelector,
-    value: string | IElement[] | null,
+    value: string | string[] | IElement[] | null,
     isSubmitHistory?: boolean
   ): ITemplateRuntimeWriteResult {
     const nodes = this.selectFields(selector)
@@ -792,14 +796,27 @@ export class TemplateRuntime {
       }
     }
 
-    const payload = nodes.map(node => ({
-      conceptId: node.field.id,
-      value,
-      isSubmitHistory
-    }))
+    const payload = nodes
+      .map(node => {
+        const normalizedValue = normalizeTemplateFieldValue(node.field, value)
+        if (normalizedValue == null) return null
+        return {
+          conceptId: node.field.id,
+          value: normalizedValue,
+          isSubmitHistory
+        }
+      })
+      .filter(Boolean) as ISetControlValueOption[]
+
+    if (!payload.length) {
+      return {
+        appliedFieldIds: [],
+        skippedKeys: [JSON.stringify(selector)]
+      }
+    }
 
     this.editor.command.executeSetControlValueList(payload)
-    const appliedFieldIds = nodes.map(node => node.field.id)
+    const appliedFieldIds = payload.map(item => item.conceptId!)
     this._refreshSnapshot(appliedFieldIds)
 
     return {
@@ -826,9 +843,14 @@ export class TemplateRuntime {
       }
 
       nodes.forEach(node => {
+        const normalizedValue = normalizeTemplateFieldValue(node.field, patch.value)
+        if (normalizedValue == null) {
+          skippedKeys.push(node.field.id)
+          return
+        }
         payload.push({
           conceptId: node.field.id,
-          value: patch.value,
+          value: normalizedValue,
           isSubmitHistory: patch.isSubmitHistory
         })
         appliedFieldIds.add(node.field.id)

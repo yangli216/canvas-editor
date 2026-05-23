@@ -23,6 +23,7 @@ describe('template designer nesting policy', () => {
       'paragraph',
       'fieldRow',
       'separator',
+      'spacer',
       'table'
     ])
     expect(canNestBlock(section, 'group')).toBe(true)
@@ -43,5 +44,30 @@ describe('template designer nesting policy', () => {
     ])
 
     expect(filtered.map(block => block.type)).toEqual(['group', 'fieldRow'])
+  })
+
+  it('横向组合不允许嵌套 spacer，避免产生横排空行语义歧义', () => {
+    const rowGroup: ITemplateGroupBlock = {
+      type: 'group',
+      direction: 'row',
+      blocks: []
+    }
+
+    expect(getAllowedNestedBlockTypes(rowGroup)).toEqual([
+      'group',
+      'staticText',
+      'paragraph',
+      'fieldRow',
+      'separator',
+      'table'
+    ])
+    expect(canNestBlock(rowGroup, 'spacer')).toBe(false)
+
+    const filtered = filterNestableBlocks(rowGroup, [
+      { type: 'spacer', lines: 2 },
+      { type: 'paragraph', segments: [{ type: 'text', value: '保留内容' }] }
+    ])
+
+    expect(filtered.map(block => block.type)).toEqual(['paragraph'])
   })
 })

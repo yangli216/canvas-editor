@@ -31,6 +31,7 @@ const PALETTE_ITEMS: IBlockPaletteItem[] = [
   { type: 'section', label: '分节', icon: '§', description: '带标题的内容分组' },
   { type: 'group', label: '组合', icon: '⊞', description: '水平或垂直组合多个块' },
   { type: 'separator', label: '分隔线', icon: '—', description: '水平分隔线' },
+  { type: 'spacer', label: '留白', icon: '↕', description: '插入空白区域，用于隔开上下内容' },
   { type: 'table', label: '表格', icon: '⊟', description: '多列表格，支持字段控件' }
 ]
 
