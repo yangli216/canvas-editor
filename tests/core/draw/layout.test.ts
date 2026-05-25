@@ -76,6 +76,7 @@ describe('Draw 排版', () => {
     const result = compileTemplate({
       id: 'separator-layout',
       version: '1.0.0',
+      name: '分割线布局测试',
       blocks: [
         {
           type: 'paragraph',

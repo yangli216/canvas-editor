@@ -10,6 +10,12 @@ import type { IEditorData } from '../interface/Editor'
 import type { IElement } from '../interface/Element'
 import type { IPageNumber } from '../interface/PageNumber'
 import type { ITr } from '../interface/table/Tr'
+import {
+  getTemplatePageDecorationPreset,
+  TEMPLATE_PAGE_DECORATION_VARIABLES,
+  type TemplatePageDecorationMode,
+  type TemplatePageDecorationVariableKey
+} from './TemplatePageDecoration'
 import { normalizeTemplateFieldValue } from './TemplateValueRender'
 
 export type TemplateFieldType =
@@ -217,6 +223,17 @@ export interface ITemplateFooterRuntimeLayout {
   operatorName?: string
 }
 
+export interface ITemplatePageDecorationPresetRef {
+  id?: string
+  mode?: TemplatePageDecorationMode
+}
+
+export interface ITemplatePageDecorationConfig {
+  header?: ITemplatePageDecorationPresetRef
+  footer?: ITemplatePageDecorationPresetRef
+  variables?: Partial<Record<TemplatePageDecorationVariableKey, string>>
+}
+
 export type ITemplateBlock =
   | ITemplateParagraphBlock
   | ITemplateFieldRowBlock
@@ -253,6 +270,7 @@ export interface ITemplateLayout {
   defaultFont?: string
   defaultFontSize?: number
   footerRuntime?: ITemplateFooterRuntimeLayout
+  pageDecorations?: ITemplatePageDecorationConfig
 }
 
 export interface ITemplateSchema {
@@ -296,6 +314,7 @@ interface ITemplateContext {
 export interface ITemplateRuntimeValues {
   printTime?: Date | string
   operatorName?: string
+  pageDecorationVariables?: Partial<Record<TemplatePageDecorationVariableKey, string>>
 }
 
 export const TEMPLATE_SYSTEM_VARIABLES = {
@@ -304,6 +323,9 @@ export const TEMPLATE_SYSTEM_VARIABLES = {
   PAGE_NO: '{{页码}}',
   PAGE_COUNT: '{{总页数}}'
 } as const
+
+export const TEMPLATE_PAGE_DECORATION_SYSTEM_VARIABLES =
+  TEMPLATE_PAGE_DECORATION_VARIABLES
 
 export const DEFAULT_SEPARATOR_OFFSET_Y = -6
 
@@ -426,7 +448,71 @@ function resolveRuntimeText(
       .replaceAll(TEMPLATE_SYSTEM_VARIABLES.PAGE_NO, '')
       .replaceAll(TEMPLATE_SYSTEM_VARIABLES.PAGE_COUNT, '')
   }
+  const pageDecorationVariables = runtime.pageDecorationVariables ?? {}
+  for (const [key, variableValue] of Object.entries(pageDecorationVariables)) {
+    const token = TEMPLATE_PAGE_DECORATION_VARIABLES[
+      key.toUpperCase() as Uppercase<TemplatePageDecorationVariableKey>
+    ]
+    if (!token) continue
+    next = next.replaceAll(token, variableValue ?? '')
+  }
   return next
+}
+
+function resolvePageDecorationVariables(
+  schema: ITemplateSchema,
+  runtime?: ITemplateRuntimeValues
+): Partial<Record<TemplatePageDecorationVariableKey, string>> {
+  const configured = schema.layout?.pageDecorations?.variables ?? {}
+  return {
+    hospitalName: configured.hospitalName ?? '',
+    documentTitle: configured.documentTitle ?? schema.name,
+    departmentName: configured.departmentName ?? '',
+    documentCode: configured.documentCode ?? '',
+    footerNote: configured.footerNote ?? 'canvas-editor template dsl demo',
+    ...(runtime?.pageDecorationVariables ?? {})
+  }
+}
+
+function mergeZoneBlocks(
+  presetBlocks: ITemplateBlock[],
+  blocks: ITemplateBlock[],
+  mode: TemplatePageDecorationMode = 'replace'
+): ITemplateBlock[] {
+  if (!presetBlocks.length) return blocks
+  if (mode === 'prepend') return [...presetBlocks, ...blocks]
+  if (mode === 'append') return [...blocks, ...presetBlocks]
+  return presetBlocks
+}
+
+function resolveZoneBlocks(
+  schema: ITemplateSchema,
+  zone: 'header' | 'footer'
+): ITemplateBlock[] {
+  const blocks = zone === 'header' ? (schema.header ?? []) : (schema.footer ?? [])
+  const presetRef = zone === 'header'
+    ? schema.layout?.pageDecorations?.header
+    : schema.layout?.pageDecorations?.footer
+  const preset = getTemplatePageDecorationPreset(presetRef?.id)
+  if (!preset || preset.zone !== zone) return blocks
+  return mergeZoneBlocks(preset.blocks, blocks, presetRef?.mode)
+}
+
+export function getResolvedTemplateBlocks(schema: ITemplateSchema): {
+  header: ITemplateBlock[]
+  main: ITemplateBlock[]
+  footer: ITemplateBlock[]
+  all: ITemplateBlock[]
+} {
+  const header = resolveZoneBlocks(schema, 'header')
+  const main = schema.blocks
+  const footer = resolveZoneBlocks(schema, 'footer')
+  return {
+    header,
+    main,
+    footer,
+    all: [...header, ...main, ...footer]
+  }
 }
 
 function mapPageNumberFormat(format?: string): string {
@@ -474,7 +560,7 @@ function createTitleElement(
     ...(rowFlex ? { rowFlex } : {}),
     valueList: [
       {
-        value: block.title,
+        value: resolveRuntimeText(block.title, ctx.runtime),
         ...ctx.layout.titleStyle,
         ...block.titleStyle
       }
@@ -496,8 +582,7 @@ function createValueSets(options: ITemplateOption[] = []): IValueSet[] {
   }))
 }
 
-function createControlValue(value: string | string[] | null | undefined) {
-  if (value == null) return null
+function createControlValue(value: string) {
   return [
     {
       value
@@ -961,7 +1046,11 @@ export function buildFieldIndex(schema: ITemplateSchema): Map<string, ITemplateF
     }
   }
 
-  walkBlocks([...(schema.header ?? []), ...schema.blocks, ...(schema.footer ?? [])])
+  walkBlocks([
+    ...resolveZoneBlocks(schema, 'header'),
+    ...schema.blocks,
+    ...resolveZoneBlocks(schema, 'footer')
+  ])
   return index
 }
 
@@ -1010,7 +1099,11 @@ export function validateSchema(schema: ITemplateSchema): ISchemaValidationError[
     }
   }
 
-  for (const block of [...(schema.header ?? []), ...schema.blocks, ...(schema.footer ?? [])]) {
+  for (const block of [
+    ...resolveZoneBlocks(schema, 'header'),
+    ...schema.blocks,
+    ...resolveZoneBlocks(schema, 'footer')
+  ]) {
     checkBlock(block)
   }
 
@@ -1067,10 +1160,13 @@ export function compileTemplate(
     },
     runtime: {
       printTime: options.runtime?.printTime,
-      operatorName: options.runtime?.operatorName || schema.layout?.footerRuntime?.operatorName
+      operatorName: options.runtime?.operatorName || schema.layout?.footerRuntime?.operatorName,
+      pageDecorationVariables: resolvePageDecorationVariables(schema, options.runtime)
     }
   }
-  const header = (schema.header || []).reduce<IElement[]>((elementList, block) => {
+  const headerBlocks = resolveZoneBlocks(schema, 'header')
+  const footerBlocks = resolveZoneBlocks(schema, 'footer')
+  const header = headerBlocks.reduce<IElement[]>((elementList, block) => {
     appendCompiledBlock(elementList, compileTemplateBlock(ctx, block))
     return elementList
   }, [])
@@ -1078,7 +1174,7 @@ export function compileTemplate(
     appendCompiledBlock(elementList, compileTemplateBlock(ctx, block))
     return elementList
   }, [])
-  const footer = (schema.footer || []).reduce<IElement[]>((elementList, block) => {
+  const footer = footerBlocks.reduce<IElement[]>((elementList, block) => {
     appendCompiledBlock(elementList, compileTemplateBlock(ctx, block))
     return elementList
   }, [])

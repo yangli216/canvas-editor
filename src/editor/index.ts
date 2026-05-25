@@ -78,6 +78,7 @@ import {
   compileTemplate,
   DEFAULT_SEPARATOR_OFFSET_Y,
   getTemplatePageNumberOptions,
+  TEMPLATE_PAGE_DECORATION_SYSTEM_VARIABLES,
   TEMPLATE_SYSTEM_VARIABLES
 } from './template'
 import {
@@ -85,14 +86,26 @@ import {
   TemplateDocumentStore
 } from './template/TemplateDocumentStore'
 import type {
+  IForkTemplateDocumentOptions,
   ITemplateDocumentContent,
+  ITemplateDocumentLineage,
   ITemplateDocumentMigrationFieldIssue,
+  ITemplateDocumentMigrationPolicyContext,
   ITemplateDocumentMigrationMapping,
   ITemplateDocumentMigrationPlan,
+  ITemplateDocumentMigrationPreview,
   ITemplateDocumentMigrationRecord,
   ITemplateDocumentMigrationResult,
+  ITemplateDocumentAutosaveInput,
+  ITemplateDocumentAutosavePayload,
+  ITemplateDocumentPersistenceRecord,
+  ITemplateDocumentStorageLike,
   ITemplateDocumentRecord,
+  ITemplateDocumentStatusTransitionPolicyContext,
+  ITemplateDocumentStatusTransitionResult,
   ITemplateDocumentTemplateBinding,
+  ITemplateDocumentWorkflowPolicy,
+  ITemplateDocumentWorkflowPolicyDecision,
   TemplateDocumentMigrationMatchMode,
   TemplateDocumentStatus
 } from './template/TemplateDocumentStore'
@@ -119,6 +132,11 @@ import {
   TemplateDataAdapterRegistry,
   MOCK_HIS_DATA_SOURCES
 } from './template/TemplateDataAdapter'
+import {
+  getTemplatePageDecorationPreset,
+  getTemplatePageDecorationPresets
+} from './template/TemplatePageDecoration'
+import type { TemplatePageDecorationMode } from './template/TemplatePageDecoration'
 import type {
   ITemplateDataAdapter,
   ITemplateDataAdapterContext,
@@ -132,6 +150,8 @@ import type {
 import type {
   ITemplateBlock,
   ITemplateCondition,
+  ITemplatePageDecorationConfig,
+  ITemplatePageDecorationPresetRef,
   TemplateConditionFieldSource,
   ITemplateField,
   ITemplateFieldValueRender,
@@ -253,6 +273,9 @@ export {
   compileTemplate,
   DEFAULT_SEPARATOR_OFFSET_Y,
   getTemplatePageNumberOptions,
+  getTemplatePageDecorationPreset,
+  getTemplatePageDecorationPresets,
+  TEMPLATE_PAGE_DECORATION_SYSTEM_VARIABLES,
   TEMPLATE_SYSTEM_VARIABLES,
   analyzeTemplateDocumentMigration,
   TemplateDocumentStore,
@@ -334,6 +357,8 @@ export type {
   IGetElementListByHTMLOption,
   ITemplateBlock,
   ITemplateCondition,
+  ITemplatePageDecorationConfig,
+  ITemplatePageDecorationPresetRef,
   TemplateConditionFieldSource,
   ITemplateField,
   ITemplateFieldValueRender,
@@ -351,14 +376,26 @@ export type {
   ITemplateSeparatorBlock,
   ITemplateSpacerBlock,
   ITemplateTextSegment,
+  IForkTemplateDocumentOptions,
   ITemplateDocumentContent,
+  ITemplateDocumentLineage,
   ITemplateDocumentMigrationFieldIssue,
+  ITemplateDocumentMigrationPolicyContext,
   ITemplateDocumentMigrationMapping,
   ITemplateDocumentMigrationPlan,
+  ITemplateDocumentMigrationPreview,
   ITemplateDocumentMigrationRecord,
   ITemplateDocumentMigrationResult,
+  ITemplateDocumentAutosaveInput,
+  ITemplateDocumentAutosavePayload,
+  ITemplateDocumentPersistenceRecord,
+  ITemplateDocumentStorageLike,
   ITemplateDocumentRecord,
+  ITemplateDocumentStatusTransitionPolicyContext,
+  ITemplateDocumentStatusTransitionResult,
   ITemplateDocumentTemplateBinding,
+  ITemplateDocumentWorkflowPolicy,
+  ITemplateDocumentWorkflowPolicyDecision,
   ITemplateFieldSelector,
   ITemplateRuntimeValuePatch,
   ITemplateRuntimeWriteResult,
@@ -377,6 +414,7 @@ export type {
   ITemplateDataAdapterResolution,
   ICreateMockHisAdapterOptions,
   IMockHisPatient,
+  TemplatePageDecorationMode,
   TemplateDocumentMigrationMatchMode,
   TemplateDocumentStatus,
   TemplateConditionOperator,

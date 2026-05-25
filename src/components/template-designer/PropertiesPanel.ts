@@ -21,6 +21,12 @@ import {
   TEMPLATE_SYSTEM_VARIABLES
 } from '../../editor/template/index'
 import type { PageSizePreset } from '../../editor/template/index'
+import { ListStyle, ListType } from '../../editor/dataset/enum/List'
+import {
+  getTemplatePageDecorationPreset,
+  getTemplatePageDecorationPresets,
+  type ITemplatePageDecorationVariableDefinition
+} from '../../editor/template/TemplatePageDecoration'
 import type { SelectionTarget } from './SchemaCanvas'
 
 export type PropertiesChangePhase = 'input' | 'commit'
@@ -173,12 +179,12 @@ function textareaInput(
 function normalizeListRender(
   render: ITemplateField['valueRender'] | undefined
 ): NonNullable<ITemplateField['valueRender']> {
-  const listType = render?.listType ?? 'ul'
-  const listStyle = listType === 'ol'
-    ? 'decimal'
-    : render?.listStyle === 'circle' || render?.listStyle === 'square'
+  const listType = render?.listType ?? ListType.UL
+  const listStyle = listType === ListType.OL
+    ? ListStyle.DECIMAL
+    : render?.listStyle === ListStyle.CIRCLE || render?.listStyle === ListStyle.SQUARE
       ? render.listStyle
-      : 'disc'
+      : ListStyle.DISC
   return {
     mode: 'list',
     listType,
@@ -348,6 +354,16 @@ export class PropertiesPanel {
         }
       })
     }
+    const onPageDecorationChange = (
+      patch: Partial<NonNullable<ITemplateLayout['pageDecorations']>>
+    ) => {
+      onChg({
+        pageDecorations: {
+          ...(this.layout.pageDecorations ?? {}),
+          ...patch
+        }
+      })
+    }
 
     // Paper size preset
     const sizeOpts = (Object.keys(PAGE_SIZE_PRESETS) as PageSizePreset[]).map(k => ({
@@ -470,6 +486,106 @@ export class PropertiesPanel {
         onChg({ defaultFontSize: v })
       ))
     ], '模板默认正文建议使用宋体 14 号，贴近真实病历文书。'))
+
+    const pageDecorations = this.layout.pageDecorations ?? {}
+    const headerPreset = getTemplatePageDecorationPreset(pageDecorations.header?.id)
+    const footerPreset = getTemplatePageDecorationPreset(pageDecorations.footer?.id)
+    const headerPresetOptions = [
+      { label: '不使用预定义页眉', value: '' },
+      ...getTemplatePageDecorationPresets('header').map(item => ({
+        label: item.name,
+        value: item.id
+      }))
+    ]
+    const footerPresetOptions = [
+      { label: '不使用预定义页脚', value: '' },
+      ...getTemplatePageDecorationPresets('footer').map(item => ({
+        label: item.name,
+        value: item.id
+      }))
+    ]
+    const modeOptions = [
+      { label: '替换当前区块', value: 'replace' },
+      { label: '前置合并', value: 'prepend' },
+      { label: '后置合并', value: 'append' }
+    ]
+    const variableDefs = Array.from(new Map(
+      [
+        ...(headerPreset?.variables ?? []),
+        ...(footerPreset?.variables ?? [])
+      ].map((item: ITemplatePageDecorationVariableDefinition) => [item.key, item])
+    ).values())
+    const decorationRows: HTMLElement[] = [
+      row('页眉模板', selectInput(
+        headerPresetOptions,
+        pageDecorations.header?.id ?? '',
+        v => onPageDecorationChange({
+          header: {
+            ...(pageDecorations.header ?? {}),
+            id: v || undefined
+          }
+        })
+      )),
+      row('页眉合并', selectInput(
+        modeOptions,
+        pageDecorations.header?.mode ?? 'replace',
+        v => onPageDecorationChange({
+          header: {
+            ...(pageDecorations.header ?? {}),
+            mode: v as 'replace' | 'prepend' | 'append'
+          }
+        })
+      )),
+      row('页脚模板', selectInput(
+        footerPresetOptions,
+        pageDecorations.footer?.id ?? '',
+        v => onPageDecorationChange({
+          footer: {
+            ...(pageDecorations.footer ?? {}),
+            id: v || undefined
+          }
+        })
+      )),
+      row('页脚合并', selectInput(
+        modeOptions,
+        pageDecorations.footer?.mode ?? 'replace',
+        v => onPageDecorationChange({
+          footer: {
+            ...(pageDecorations.footer ?? {}),
+            mode: v as 'replace' | 'prepend' | 'append'
+          }
+        })
+      ))
+    ]
+    if (variableDefs.length) {
+      variableDefs.forEach(def => {
+        decorationRows.push(row(
+          def.label,
+          textInput(
+            pageDecorations.variables?.[def.key] ?? '',
+            v => onPageDecorationChange({
+              variables: {
+                ...(pageDecorations.variables ?? {}),
+                [def.key]: v || undefined
+              }
+            }),
+            def.placeholder
+          ),
+          def.description
+        ))
+      })
+    }
+    if (headerPreset || footerPreset) {
+      decorationRows.push(note('若需修改通用页眉页脚的具体内容，请到左侧页眉/页脚区点击“转为可编辑页眉/页脚”，展开为当前模板自己的区块后再编辑。'))
+    }
+    decorationRows.push(note('文书标题默认回退模板名称；页码仍建议通过“页脚运行态”统一控制。'))
+    const decorationCard = card(
+      '页眉页脚模板',
+      decorationRows,
+      '通过预定义页眉页脚快速复用医院文书头尾样式，并支持少量变量和合并模式配置。'
+    )
+    decorationCard.dataset.layoutSection = 'decorations'
+    this.container.append(decorationCard)
 
     const footerRuntime = this.layout.footerRuntime ?? {}
     this.container.append(card('页脚运行态', [
@@ -1128,22 +1244,22 @@ export class PropertiesPanel {
                 '列表类型',
                 selectInput(
                   [
-                    { label: '项目符号', value: 'ul' },
-                    { label: '项目编号', value: 'ol' }
+                    { label: '项目符号', value: ListType.UL },
+                    { label: '项目编号', value: ListType.OL }
                   ],
-                  listRender.listType,
+                  listRender.listType ?? ListType.UL,
                   value => {
-                    const listType = value as 'ul' | 'ol'
+                    const listType = value as ListType
                     onChange({
                       ...field,
                       valueRender: {
                         ...listRender,
                         listType,
-                        listStyle: listType === 'ol'
-                          ? 'decimal'
-                          : listRender.listStyle === 'circle' || listRender.listStyle === 'square'
+                        listStyle: listType === ListType.OL
+                          ? ListStyle.DECIMAL
+                          : listRender.listStyle === ListStyle.CIRCLE || listRender.listStyle === ListStyle.SQUARE
                             ? listRender.listStyle
-                            : 'disc'
+                            : ListStyle.DISC
                       }
                     })
                   }
@@ -1152,19 +1268,19 @@ export class PropertiesPanel {
               row(
                 '列表样式',
                 selectInput(
-                  listRender.listType === 'ol'
-                    ? [{ label: '阿拉伯数字', value: 'decimal' }]
+                  listRender.listType === ListType.OL
+                    ? [{ label: '阿拉伯数字', value: ListStyle.DECIMAL }]
                     : [
-                        { label: '实心圆点', value: 'disc' },
-                        { label: '空心圆点', value: 'circle' },
-                        { label: '方块', value: 'square' }
+                        { label: '实心圆点', value: ListStyle.DISC },
+                        { label: '空心圆点', value: ListStyle.CIRCLE },
+                        { label: '方块', value: ListStyle.SQUARE }
                       ],
-                  listRender.listStyle,
+                  listRender.listStyle ?? ListStyle.DISC,
                   value => onChange({
                     ...field,
                     valueRender: {
                       ...listRender,
-                      listStyle: value as 'disc' | 'circle' | 'square' | 'decimal'
+                      listStyle: value as ListStyle
                     }
                   })
                 )
@@ -1754,7 +1870,7 @@ export class PropertiesPanel {
     return this.container
   }
 
-  focusLayoutSection(section: 'paper' | 'margins') {
+  focusLayoutSection(section: 'paper' | 'margins' | 'decorations') {
     const target = this.container.querySelector(
       `[data-layout-section="${section}"]`
     ) as HTMLElement | null

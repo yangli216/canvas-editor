@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildTemplateFieldRuntimeIndex,
   createTemplateRuntime,
-  ElementType,
   ListStyle,
   ListType,
   type ITemplateSchema
@@ -472,12 +471,22 @@ describe('template runtime', () => {
         conceptId: 'diagnosisList',
         value: [
           expect.objectContaining({
-            type: ElementType.LIST,
+            value: '\u200B',
             listType: ListType.UL,
             listStyle: ListStyle.DISC
           }),
           expect.objectContaining({
-            type: ElementType.LIST,
+            value: '冠状动脉粥样硬化性心脏病',
+            listType: ListType.UL,
+            listStyle: ListStyle.DISC
+          }),
+          expect.objectContaining({
+            value: '\u200B',
+            listType: ListType.UL,
+            listStyle: ListStyle.DISC
+          }),
+          expect.objectContaining({
+            value: '2 型糖尿病',
             listType: ListType.UL,
             listStyle: ListStyle.DISC
           })

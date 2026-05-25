@@ -10,21 +10,20 @@ export const informedConsentTemplate: ITemplateSchema = {
     defaultControlWidth: 130,
     textareaWidth: 440,
     sectionSpacing: 1,
+    pageDecorations: {
+      header: {
+        id: 'informed-consent-header-compact'
+      },
+      footer: {
+        id: 'medical-record-footer-audit'
+      },
+      variables: {
+        hospitalName: '第一人民医院',
+        documentTitle: '知情同意书'
+      }
+    },
     titleStyle: { size: 18 }
   },
-  header: [
-    {
-      type: 'paragraph',
-      style: { size: 28 },
-      segments: [{ type: 'text', value: '第一人民医院' }]
-    },
-    {
-      type: 'paragraph',
-      style: { size: 18 },
-      segments: [{ type: 'text', value: '知情同意书' }]
-    },
-    { type: 'separator' }
-  ],
   blocks: [
     {
       type: 'fieldRow',
@@ -154,13 +153,6 @@ export const informedConsentTemplate: ITemplateSchema = {
         { id: 'physicianName', type: 'text', label: '谈话医师', placeholder: '请输入医师姓名', required: true },
         { id: 'physicianSignDate', type: 'date', label: '谈话日期', placeholder: '选择日期' }
       ]
-    }
-  ],
-  footer: [
-    {
-      type: 'paragraph',
-      style: { size: 12 },
-      segments: [{ type: 'text', value: 'canvas-editor template dsl demo' }]
     }
   ]
 }

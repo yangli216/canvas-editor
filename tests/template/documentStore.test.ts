@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   analyzeTemplateDocumentMigration,
   TemplateDocumentStore,
+  type ITemplateDocumentStorageLike,
+  type ITemplateDocumentWorkflowPolicy,
   type ITemplateSchema
 } from '@/editor'
 
@@ -92,13 +94,24 @@ function createNextSchema(): ITemplateSchema {
 
 describe('template document store', () => {
   const storageKey = `canvas-editor:template-documents:test:${Date.now()}`
+  const restoreStorageKey = `${storageKey}:restore`
+  const storageData = new Map<string, string>()
+  const storage: ITemplateDocumentStorageLike = {
+    getItem: key => storageData.get(key) ?? null,
+    setItem: (key, value) => {
+      storageData.set(key, value)
+    },
+    removeItem: key => {
+      storageData.delete(key)
+    }
+  }
 
   beforeEach(() => {
-    localStorage.removeItem(storageKey)
+    storageData.clear()
   })
 
   it('病历实例保存时会绑定模板快照和字段值', () => {
-    const store = new TemplateDocumentStore(storageKey)
+    const store = new TemplateDocumentStore(storageKey, storage)
     const record = store.create({
       schema: createLegacySchema(),
       patientId: 'p-001',
@@ -117,7 +130,7 @@ describe('template document store', () => {
       diagnosis: '肺部感染'
     })
 
-    const restored = new TemplateDocumentStore(storageKey).get(record.id)
+    const restored = new TemplateDocumentStore(storageKey, storage).get(record.id)
     expect(restored?.patientId).toBe('p-001')
     expect(restored?.template.snapshot.version).toBe('1.0.0')
   })
@@ -166,7 +179,7 @@ describe('template document store', () => {
   })
 
   it('已有病历默认不会在缺少新增必填字段时自动迁移，允许人工确认后再迁移', () => {
-    const store = new TemplateDocumentStore(storageKey)
+    const store = new TemplateDocumentStore(storageKey, storage)
     const record = store.create({
       schema: createLegacySchema(),
       flatValues: {
@@ -200,5 +213,241 @@ describe('template document store', () => {
       unresolvedFieldIds: ['chiefComplaint'],
       droppedFieldIds: ['legacyRemark']
     })
+  })
+
+  it('可导出自动暂存 payload 和正式持久化记录', () => {
+    const store = new TemplateDocumentStore(storageKey, storage)
+    const record = store.create({
+      schema: createLegacySchema(),
+      patientId: 'p-001',
+      encounterId: 'enc-001',
+      flatValues: {
+        patientName: '张三',
+        diagnosis: '肺部感染'
+      },
+      structuredValues: {
+        patient: {
+          name: '张三'
+        }
+      },
+      editorState: {
+        cursor: 'field:patientName'
+      }
+    })
+
+    const autosaved = store.autosave(record.id, {
+      flatValues: {
+        patientName: '李四',
+        diagnosis: '上呼吸道感染'
+      },
+      editorState: {
+        cursor: 'field:diagnosis'
+      }
+    })
+    const autosavePayload = store.exportAutosavePayload(record.id)
+    const persistence = store.exportPersistenceRecord(record.id)
+
+    expect(autosaved?.content.flatValues).toEqual({
+      patientName: '李四',
+      diagnosis: '上呼吸道感染'
+    })
+    expect(autosavePayload).toMatchObject({
+      documentId: record.id,
+      templateId: 'admission-record',
+      templateVersion: '1.0.0',
+      flatValues: {
+        patientName: '李四',
+        diagnosis: '上呼吸道感染'
+      },
+      editorState: {
+        cursor: 'field:diagnosis'
+      }
+    })
+    expect(persistence).toMatchObject({
+      documentId: record.id,
+      patientId: 'p-001',
+      encounterId: 'enc-001',
+      templateId: 'admission-record',
+      templateVersion: '1.0.0',
+      flatValues: {
+        patientName: '李四',
+        diagnosis: '上呼吸道感染'
+      },
+      structuredValues: {
+        patient: {
+          name: '张三'
+        }
+      }
+    })
+    expect(persistence?.templateSnapshot.version).toBe('1.0.0')
+  })
+
+  it('可输出迁移预览并从持久化对象回灌病历记录', () => {
+    const store = new TemplateDocumentStore(storageKey, storage)
+    const record = store.create({
+      schema: createLegacySchema(),
+      status: 'signed',
+      flatValues: {
+        patientName: '张三',
+        diagnosis: '肺部感染',
+        legacyRemark: '旧模板备注'
+      }
+    })
+
+    const preview = store.previewMigration(record.id, createNextSchema())
+    const persisted = store.exportPersistenceRecord(record.id)
+    const restoredStore = new TemplateDocumentStore(restoreStorageKey, storage)
+    const restored = persisted
+      ? restoredStore.upsertFromPersistence(persisted)
+      : null
+
+    expect(preview).toMatchObject({
+      documentId: record.id,
+      currentStatus: 'signed',
+      fromTemplateVersion: '1.0.0',
+      toTemplateVersion: '1.1.0',
+      canAutoApply: false,
+      requiresManualConfirmation: true
+    })
+    expect(preview?.unresolvedFields).toEqual([
+      {
+        fieldId: 'chiefComplaint',
+        label: '主诉',
+        reason: 'required'
+      }
+    ])
+    expect(restored?.status).toBe('signed')
+    expect(restored?.template.snapshot.version).toBe('1.0.0')
+    expect(restored?.content.flatValues.legacyRemark).toBe('旧模板备注')
+  })
+
+  it('可通过外部 workflow policy 阻止已签名病历迁移，保持编辑器内核通用', () => {
+    const workflowPolicy: ITemplateDocumentWorkflowPolicy = {
+      beforeMigrate: ({ currentDocument }) => {
+        if (currentDocument.status === 'signed') {
+          return {
+            allowed: false,
+            reason: 'signed_document_locked',
+            message: '已签名文书禁止直接迁移'
+          }
+        }
+        return undefined
+      }
+    }
+    const store = new TemplateDocumentStore(storageKey, storage, workflowPolicy)
+    const record = store.create({
+      schema: createLegacySchema(),
+      status: 'signed',
+      flatValues: {
+        patientName: '张三',
+        diagnosis: '肺部感染'
+      }
+    })
+
+    const migrated = store.migrate(record.id, createNextSchema(), {
+      allowPartial: true,
+      note: '尝试升级模板'
+    })
+
+    expect(migrated).toMatchObject({
+      applied: false,
+      reason: 'blocked_by_policy',
+      message: '已签名文书禁止直接迁移'
+    })
+    expect(store.get(record.id)?.template.version).toBe('1.0.0')
+  })
+
+  it('提供通用状态流转入口，并允许业务侧注入约束', () => {
+    const workflowPolicy: ITemplateDocumentWorkflowPolicy = {
+      beforeStatusChange: ({ previousStatus, nextStatus }) => {
+        if (previousStatus === 'draft' && nextStatus === 'archived') {
+          return {
+            allowed: false,
+            reason: 'direct_archive_not_allowed',
+            message: '草稿不能直接归档'
+          }
+        }
+        return undefined
+      }
+    }
+    const store = new TemplateDocumentStore(storageKey, storage, workflowPolicy)
+    const record = store.create({
+      schema: createLegacySchema()
+    })
+
+    const blocked = store.setStatus(record.id, 'archived')
+    expect(blocked).toMatchObject({
+      applied: false,
+      previousStatus: 'draft',
+      nextStatus: 'archived',
+      reason: 'blocked_by_policy',
+      message: '草稿不能直接归档'
+    })
+
+    const signed = store.setStatus(record.id, 'signed')
+    expect(signed).toMatchObject({
+      applied: true,
+      previousStatus: 'draft',
+      nextStatus: 'signed'
+    })
+    expect(store.get(record.id)?.status).toBe('signed')
+  })
+
+  it('可先 fork 新文档再迁移，以支持业务侧实现复制新版本后升级', () => {
+    const workflowPolicy: ITemplateDocumentWorkflowPolicy = {
+      beforeMigrate: ({ currentDocument }) => {
+        if (currentDocument.status === 'archived') {
+          return {
+            allowed: false,
+            reason: 'archived_document_locked',
+            message: '已归档文书需复制新版本后再迁移'
+          }
+        }
+        return undefined
+      }
+    }
+    const store = new TemplateDocumentStore(storageKey, storage, workflowPolicy)
+    const archived = store.create({
+      schema: createLegacySchema(),
+      status: 'archived',
+      flatValues: {
+        patientName: '张三',
+        diagnosis: '肺部感染',
+        legacyRemark: '归档版本备注'
+      }
+    })
+
+    const blocked = store.migrate(archived.id, createNextSchema(), {
+      allowPartial: true
+    })
+    expect(blocked).toMatchObject({
+      applied: false,
+      reason: 'blocked_by_policy',
+      message: '已归档文书需复制新版本后再迁移'
+    })
+
+    const forked = store.fork(archived.id, {
+      reason: '基于归档版本生成修订稿'
+    })
+
+    expect(forked?.id).not.toBe(archived.id)
+    expect(forked?.status).toBe('draft')
+    expect(forked?.lineage).toMatchObject({
+      sourceDocumentId: archived.id,
+      sourceTemplateId: 'admission-record',
+      sourceTemplateVersion: '1.0.0',
+      reason: '基于归档版本生成修订稿'
+    })
+
+    const migrated = forked
+      ? store.migrate(forked.id, createNextSchema(), {
+        allowPartial: true,
+        note: '升级到新模板版本'
+      })
+      : null
+
+    expect(migrated?.applied).toBe(true)
+    expect(migrated?.document?.template.version).toBe('1.1.0')
+    expect(store.get(archived.id)?.template.version).toBe('1.0.0')
   })
 })

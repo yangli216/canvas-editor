@@ -10,21 +10,20 @@ export const dischargeRecordTemplate: ITemplateSchema = {
     defaultControlWidth: 120,
     textareaWidth: 420,
     sectionSpacing: 1,
+    pageDecorations: {
+      header: {
+        id: 'medical-record-header-classic'
+      },
+      footer: {
+        id: 'medical-record-footer-audit'
+      },
+      variables: {
+        hospitalName: '第一人民医院',
+        documentTitle: '住院病历 · 出院记录'
+      }
+    },
     titleStyle: { size: 18 }
   },
-  header: [
-    {
-      type: 'paragraph',
-      style: { size: 28 },
-      segments: [{ type: 'text', value: '第一人民医院' }]
-    },
-    {
-      type: 'paragraph',
-      style: { size: 18 },
-      segments: [{ type: 'text', value: '住院病历 · 出院记录' }]
-    },
-    { type: 'separator' }
-  ],
   blocks: [
     {
       type: 'fieldRow',
@@ -141,13 +140,6 @@ export const dischargeRecordTemplate: ITemplateSchema = {
         { id: 'physicianName', type: 'text', label: '住院医师', placeholder: '请输入医师姓名' },
         { id: 'signatureDate', type: 'date', label: '签署日期', placeholder: '选择日期' }
       ]
-    }
-  ],
-  footer: [
-    {
-      type: 'paragraph',
-      style: { size: 12 },
-      segments: [{ type: 'text', value: 'canvas-editor template dsl demo' }]
     }
   ]
 }

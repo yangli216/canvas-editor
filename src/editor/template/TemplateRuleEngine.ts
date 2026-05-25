@@ -1,5 +1,6 @@
 import type { Editor } from '../index'
 import type { ITemplateSchema, ITemplateRule, ITemplateCondition, ITemplateField } from './index'
+import { getResolvedTemplateBlocks } from './index'
 import type { ISetControlProperties } from '../interface/Control'
 
 function evaluateCondition(
@@ -41,6 +42,7 @@ interface FieldInfo {
 
 function collectFieldInfos(schema: ITemplateSchema): FieldInfo[] {
   const infos: FieldInfo[] = []
+  const resolved = getResolvedTemplateBlocks(schema)
 
   function walkBlocks(blocks: typeof schema.blocks, blockId?: string) {
     for (const block of blocks) {
@@ -64,17 +66,13 @@ function collectFieldInfos(schema: ITemplateSchema): FieldInfo[] {
     }
   }
 
-  const allZones = [
-    ...(schema.header ?? []),
-    ...schema.blocks,
-    ...(schema.footer ?? [])
-  ]
-  walkBlocks(allZones)
+  walkBlocks(resolved.all)
   return infos
 }
 
 function collectBlockRules(schema: ITemplateSchema): Map<string, ITemplateRule[]> {
   const map = new Map<string, ITemplateRule[]>()
+  const resolved = getResolvedTemplateBlocks(schema)
 
   function walkBlocks(blocks: typeof schema.blocks) {
     for (const block of blocks) {
@@ -87,8 +85,7 @@ function collectBlockRules(schema: ITemplateSchema): Map<string, ITemplateRule[]
     }
   }
 
-  const allZones = [...(schema.header ?? []), ...schema.blocks, ...(schema.footer ?? [])]
-  walkBlocks(allZones)
+  walkBlocks(resolved.all)
   return map
 }
 

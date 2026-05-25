@@ -4,9 +4,11 @@ import {
   ControlType,
   DEFAULT_SEPARATOR_OFFSET_Y,
   ElementType,
+  getTemplatePageDecorationPresets,
   getTemplatePageNumberOptions,
   ListStyle,
   ListType,
+  TEMPLATE_PAGE_DECORATION_SYSTEM_VARIABLES,
   TitleLevel,
   TEMPLATE_SYSTEM_VARIABLES,
   type ITemplateSchema
@@ -310,17 +312,243 @@ describe('template compiler', () => {
     )
 
     expect(Array.isArray(diagnosisControl?.control?.value)).toBe(true)
-    expect(diagnosisControl?.control?.value).toHaveLength(2)
     expect(diagnosisControl?.control?.value?.[0]).toMatchObject({
-      type: ElementType.LIST,
+      value: '\u200B',
       listType: ListType.UL,
       listStyle: ListStyle.DISC
     })
     expect(diagnosisControl?.control?.value?.[1]).toMatchObject({
-      type: ElementType.LIST,
+      value: '冠心病',
       listType: ListType.UL,
       listStyle: ListStyle.DISC
     })
+    expect(diagnosisControl?.control?.value?.[2]).toMatchObject({
+      value: '\u200B',
+      listType: ListType.UL,
+      listStyle: ListStyle.DISC
+    })
+    expect(diagnosisControl?.control?.value?.[3]).toMatchObject({
+      value: '2 型糖尿病',
+      listType: ListType.UL,
+      listStyle: ListStyle.DISC
+    })
+    expect(diagnosisControl?.control?.value?.[0].listId).toBe(
+      diagnosisControl?.control?.value?.[3].listId
+    )
+  })
+
+  it('支持引入预定义页眉页脚并配置变量', () => {
+    const result = compileTemplate({
+      ...schema,
+      name: '入院记录模板',
+      layout: {
+        pageDecorations: {
+          header: {
+            id: 'medical-record-header-classic'
+          },
+          footer: {
+            id: 'medical-record-footer-audit'
+          },
+          variables: {
+            hospitalName: '第一人民医院',
+            footerNote: '模板页脚说明'
+          }
+        },
+        footerRuntime: {
+          operatorName: '张医生'
+        }
+      },
+      header: [],
+      footer: []
+    }, {
+      runtime: {
+        printTime: '2026-05-23 09:20'
+      }
+    })
+
+    const header = result.header ?? []
+    const footer = result.footer ?? []
+
+    expect(header.some(element => element.value === '第一人民医院')).toBe(true)
+    expect(header.some(element => element.value === '入院记录模板')).toBe(true)
+    expect(footer.some(element => element.value.includes('张医生'))).toBe(true)
+    expect(footer.some(element => element.value === '模板页脚说明')).toBe(true)
+  })
+
+  it('页眉页脚 preset 支持 prepend / append 合并模式', () => {
+    const prepend = compileTemplate({
+      ...schema,
+      layout: {
+        pageDecorations: {
+          header: {
+            id: 'medical-record-header-classic',
+            mode: 'prepend'
+          },
+          variables: {
+            hospitalName: '第一人民医院',
+            documentTitle: '模板标题'
+          }
+        }
+      },
+      header: [
+        {
+          type: 'staticText',
+          text: '补充页眉',
+          align: 'center'
+        }
+      ]
+    })
+    const append = compileTemplate({
+      ...schema,
+      layout: {
+        pageDecorations: {
+          footer: {
+            id: 'medical-record-footer-audit',
+            mode: 'append'
+          },
+          variables: {
+            footerNote: '尾部说明'
+          }
+        }
+      },
+      footer: [
+        {
+          type: 'staticText',
+          text: '自定义页脚',
+          align: 'center'
+        }
+      ]
+    })
+
+    const prependHeader = prepend.header ?? []
+    const appendFooter = append.footer ?? []
+
+    expect(prependHeader.findIndex(element => element.value === '第一人民医院')).toBeLessThan(
+      prependHeader.findIndex(element => element.value === '补充页眉')
+    )
+    expect(appendFooter.findIndex(element => element.value === '自定义页脚')).toBeLessThan(
+      appendFooter.findIndex(element => element.value === '尾部说明')
+    )
+  })
+
+  it('页眉页脚 preset 变量支持在普通文本编译时替换', () => {
+    const result = compileTemplate({
+      ...schema,
+      header: [
+        {
+          type: 'paragraph',
+          segments: [
+            {
+              type: 'text',
+              value: `${TEMPLATE_PAGE_DECORATION_SYSTEM_VARIABLES.HOSPITALNAME} · ${TEMPLATE_PAGE_DECORATION_SYSTEM_VARIABLES.DOCUMENTTITLE}`
+            }
+          ]
+        }
+      ],
+      layout: {
+        pageDecorations: {
+          variables: {
+            hospitalName: '第一人民医院',
+            documentTitle: '测试文书'
+          }
+        }
+      }
+    })
+
+    expect((result.header ?? []).some(element => element.value === '第一人民医院 · 测试文书')).toBe(true)
+  })
+
+  it('业务场景页眉 preset 已纳入模板库', () => {
+    const headerPresetIds = getTemplatePageDecorationPresets('header').map(item => item.id)
+
+    expect(headerPresetIds).toEqual(expect.arrayContaining([
+      'lab-report-header',
+      'informed-consent-header-compact',
+      'ultrasound-report-header-compact',
+      'surgical-record-header-operative',
+      'consultation-record-header-mdt'
+    ]))
+  })
+
+  it('业务场景页脚 preset 已纳入模板库', () => {
+    const footerPresetIds = getTemplatePageDecorationPresets('footer').map(item => item.id)
+
+    expect(footerPresetIds).toEqual(expect.arrayContaining([
+      'lab-report-footer-signoff',
+      'ultrasound-report-footer-signoff',
+      'surgical-record-footer-audit',
+      'consultation-record-footer-summary'
+    ]))
+  })
+
+  it('检验报告页眉 preset 可按变量编译', () => {
+    const result = compileTemplate({
+      ...schema,
+      header: [],
+      layout: {
+        pageDecorations: {
+          header: {
+            id: 'lab-report-header'
+          },
+          variables: {
+            hospitalName: '第一人民医院',
+            documentTitle: '检验报告单',
+            departmentName: '检验科',
+            documentCode: 'LAB-2026-001'
+          }
+        }
+      }
+    })
+
+    const header = result.header ?? []
+    expect(header.some(element => element.value === '第一人民医院')).toBe(true)
+    expect(header.some(element => element.value === '检验报告单')).toBe(true)
+    expect(header.some(element => element.value === '检验科')).toBe(true)
+    expect(header.some(element => element.value === 'LAB-2026-001')).toBe(true)
+  })
+
+  it('会诊页眉页脚 preset 可按变量编译', () => {
+    const result = compileTemplate({
+      ...schema,
+      header: [],
+      footer: [],
+      layout: {
+        pageDecorations: {
+          header: {
+            id: 'consultation-record-header-mdt'
+          },
+          footer: {
+            id: 'consultation-record-footer-summary'
+          },
+          variables: {
+            hospitalName: '第一人民医院',
+            documentTitle: '多学科会诊记录',
+            departmentName: '肿瘤中心',
+            documentCode: 'MDT-2026-008',
+            footerNote: '会诊后 24 小时内补录最终意见'
+          }
+        }
+      }
+    })
+
+    const header = result.header ?? []
+    const footer = result.footer ?? []
+    const headerText = header.flatMap(element => [
+      ...(element.value ? [element.value] : []),
+      ...(element.valueList?.map(item => item.value) ?? [])
+    ]).join('')
+    const footerText = footer.flatMap(element => [
+      ...(element.value ? [element.value] : []),
+      ...(element.valueList?.map(item => item.value) ?? [])
+    ]).join('')
+    const consultationTitle = header.find(
+      element => element.type === ElementType.TITLE
+    )
+
+    expect(consultationTitle?.valueList?.[0].value).toBe('多学科会诊记录')
+    expect(headerText).toContain('第一人民医院 · 肿瘤中心 · 会诊编号 MDT-2026-008')
+    expect(footerText).toContain('会诊归属：肿瘤中心    更新时间：')
+    expect(footerText).toContain('会诊后 24 小时内补录最终意见')
   })
 
   it('section 会编译为标题元素，并把规则写进 extension.template', () => {

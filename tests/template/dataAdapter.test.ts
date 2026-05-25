@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createMockHisAdapter,
   createTemplateRuntime,
-  ElementType,
   ListStyle,
   ListType,
   TemplateDataAdapterRegistry,
@@ -251,12 +250,22 @@ describe('template data adapter', () => {
     expect(result.appliedFieldIds).toEqual(['orderSummaryList'])
     expect(values.get('orderSummaryList')).toEqual([
       expect.objectContaining({
-        type: ElementType.LIST,
+        value: '\u200B',
         listType: ListType.OL,
         listStyle: ListStyle.DECIMAL
       }),
       expect.objectContaining({
-        type: ElementType.LIST,
+        value: '阿司匹林肠溶片 100mg qd 口服',
+        listType: ListType.OL,
+        listStyle: ListStyle.DECIMAL
+      }),
+      expect.objectContaining({
+        value: '\u200B',
+        listType: ListType.OL,
+        listStyle: ListStyle.DECIMAL
+      }),
+      expect.objectContaining({
+        value: '阿托伐他汀钙片 20mg qn 口服',
         listType: ListType.OL,
         listStyle: ListStyle.DECIMAL
       })

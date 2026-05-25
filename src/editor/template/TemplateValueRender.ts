@@ -1,6 +1,7 @@
-import { ElementType } from '../dataset/enum/Element'
+import { ZERO } from '../dataset/constant/Common'
 import { ListStyle, ListType } from '../dataset/enum/List'
 import type { IElement } from '../interface/Element'
+import { getUUID } from '../utils'
 import type { ITemplateField } from './index'
 
 export type TemplateRenderableValue = string | IElement[] | null
@@ -58,6 +59,33 @@ function createListItemValue(field: ITemplateField, value: string): IElement {
   }
 }
 
+function createListValueElements(
+  field: ITemplateField,
+  items: string[],
+  listType: ListType,
+  listStyle: ListStyle
+): IElement[] {
+  const listId = getUUID()
+  const elementList: IElement[] = []
+
+  items.forEach(item => {
+    elementList.push({
+      value: ZERO,
+      listId,
+      listType,
+      listStyle
+    })
+    elementList.push({
+      ...createListItemValue(field, item),
+      listId,
+      listType,
+      listStyle
+    })
+  })
+
+  return elementList
+}
+
 export function normalizeTemplateFieldValue(
   field: ITemplateField,
   value: string | string[] | IElement[] | null | undefined
@@ -75,13 +103,7 @@ export function normalizeTemplateFieldValue(
   ) {
     const listType = getListType(field)
     const listStyle = getListStyle(field, listType)
-    return items.map(item => ({
-      type: ElementType.LIST,
-      value: '',
-      listType,
-      listStyle,
-      valueList: [createListItemValue(field, item)]
-    }))
+    return createListValueElements(field, items, listType, listStyle)
   }
 
   return items.join('、')

@@ -3,10 +3,20 @@ import {
   templateRegistry,
   type TemplatePublishStatus
 } from '../../editor/template/TemplateRegistry'
-import type { ITemplateSchema } from '../../editor/template/index'
+import type { ITemplateBlock, ITemplateSchema } from '../../editor/template/index'
 import {
+  getResolvedTemplateBlocks,
   validateSchema
 } from '../../editor/template/index'
+import {
+  TEMPLATE_PAGE_DECORATION_VARIABLES,
+  getTemplatePageDecorationPreset,
+  getTemplatePageDecorationPresets,
+  type ITemplatePageDecorationPreset,
+  type ITemplatePageDecorationVariableDefinition,
+  type TemplatePageDecorationMode,
+  type TemplatePageDecorationVariableKey
+} from '../../editor/template/TemplatePageDecoration'
 import {
   buildTemplateFieldRuntimeIndex
 } from '../../editor/template/TemplateRuntime'
@@ -36,6 +46,185 @@ interface ITemplateWorkbenchItem extends ITemplateListItem {
   businessFieldCount: number
   dataSourceCount: number
   issueCount: number
+}
+
+function normalizePageDecorationConfig(
+  pageDecorations: ITemplateSchema['layout'] extends infer L
+    ? L extends { pageDecorations?: infer P }
+      ? P
+      : never
+    : never
+) {
+  const header = pageDecorations?.header?.id
+    ? {
+        id: pageDecorations.header.id,
+        mode: pageDecorations.header.mode ?? 'replace'
+      }
+    : undefined
+  const footer = pageDecorations?.footer?.id
+    ? {
+        id: pageDecorations.footer.id,
+        mode: pageDecorations.footer.mode ?? 'replace'
+      }
+    : undefined
+  const variables = Object.fromEntries(
+    Object.entries(pageDecorations?.variables ?? {}).filter(([, value]) =>
+      typeof value === 'string' && value.trim().length > 0
+    )
+  ) as Partial<Record<TemplatePageDecorationVariableKey, string>>
+
+  if (!header && !footer && !Object.keys(variables).length) {
+    return undefined
+  }
+
+  return {
+    ...(header ? { header } : {}),
+    ...(footer ? { footer } : {}),
+    ...(Object.keys(variables).length ? { variables } : {})
+  }
+}
+
+const PAGE_DECORATION_MODE_LABEL: Record<TemplatePageDecorationMode, string> = {
+  replace: '替换当前区块',
+  prepend: '前置合并',
+  append: '后置合并'
+}
+
+const PAGE_DECORATION_BLOCK_LABEL: Record<string, string> = {
+  paragraph: '段落',
+  staticText: '静态文本',
+  separator: '分隔线',
+  section: '章节',
+  group: '分组',
+  spacer: '留白',
+  fieldRow: '字段行',
+  table: '表格'
+}
+
+function truncateDecorationSummary(text: string, max = 44): string {
+  if (text.length <= max) return text
+  return `${text.slice(0, max)}...`
+}
+
+function resolveDecorationPreviewText(
+  text: string,
+  variables: Partial<Record<TemplatePageDecorationVariableKey, string>>,
+  schemaName: string
+): string {
+  const replacements: Record<string, string> = {
+    [TEMPLATE_PAGE_DECORATION_VARIABLES.HOSPITALNAME]: variables.hospitalName?.trim() || '医院名称',
+    [TEMPLATE_PAGE_DECORATION_VARIABLES.DOCUMENTTITLE]: variables.documentTitle?.trim() || schemaName || '文书标题',
+    [TEMPLATE_PAGE_DECORATION_VARIABLES.DEPARTMENTNAME]: variables.departmentName?.trim() || '科室名称',
+    [TEMPLATE_PAGE_DECORATION_VARIABLES.DOCUMENTCODE]: variables.documentCode?.trim() || '文书编号',
+    [TEMPLATE_PAGE_DECORATION_VARIABLES.FOOTERNOTE]: variables.footerNote?.trim() || '页脚附注'
+  }
+
+  return Object.entries(replacements).reduce((result, [token, value]) => {
+    return result.split(token).join(value)
+  }, text)
+}
+
+function getDecorationBlockSummary(
+  block: ITemplateBlock,
+  variables: Partial<Record<TemplatePageDecorationVariableKey, string>>,
+  schemaName: string
+): string {
+  switch (block.type) {
+    case 'staticText':
+      return truncateDecorationSummary(
+        resolveDecorationPreviewText(block.text, variables, schemaName) || '（空文本）'
+      )
+    case 'paragraph': {
+      const text = block.segments.map(segment => {
+        if (segment.type === 'text') {
+          return resolveDecorationPreviewText(segment.value, variables, schemaName)
+        }
+        return `[${segment.field.label || segment.field.id}]`
+      }).join('')
+      return truncateDecorationSummary(text || '（空段落）')
+    }
+    case 'separator':
+      return '水平分隔线'
+    case 'section': {
+      const title = resolveDecorationPreviewText(block.title || '未命名章节', variables, schemaName)
+      return truncateDecorationSummary(`${title} · ${block.blocks.length} 个子块`)
+    }
+    case 'group':
+      return `分组容器 · ${block.blocks.length} 个子块`
+    case 'table':
+      return truncateDecorationSummary(`表格：${block.columns.map(column => column.header).join('、')}`)
+    case 'fieldRow':
+      return truncateDecorationSummary(`字段：${block.fields.map(field => field.label || field.id).join('、')}`)
+    case 'spacer':
+      return `留白 ${block.lines || 1} 行`
+    default:
+      return '未知区块'
+  }
+}
+
+function createPageDecorationPreview(
+  zoneLabel: string,
+  preset: ITemplatePageDecorationPreset | undefined,
+  mode: TemplatePageDecorationMode,
+  variables: Partial<Record<TemplatePageDecorationVariableKey, string>>,
+  schemaName: string
+): HTMLDivElement {
+  const preview = document.createElement('div')
+  preview.className = 'tm-decoration-preview'
+
+  const header = document.createElement('div')
+  header.className = 'tm-decoration-preview__header'
+  const title = document.createElement('div')
+  title.className = 'tm-decoration-preview__title'
+  title.textContent = `${zoneLabel}预览`
+  const meta = document.createElement('div')
+  meta.className = 'tm-decoration-preview__meta'
+  meta.textContent = preset
+    ? `${PAGE_DECORATION_MODE_LABEL[mode]} · ${preset.blocks.length} 个区块`
+    : '未选择预定义方案'
+  header.append(title, meta)
+  preview.append(header)
+
+  if (!preset) {
+    const empty = document.createElement('div')
+    empty.className = 'tm-decoration-preview__empty'
+    empty.textContent = `当前保留模板原有${zoneLabel}内容。`
+    preview.append(empty)
+    return preview
+  }
+
+  const counts = preset.blocks.reduce<Record<string, number>>((accumulator, block) => {
+    const label = PAGE_DECORATION_BLOCK_LABEL[block.type] ?? block.type
+    accumulator[label] = (accumulator[label] ?? 0) + 1
+    return accumulator
+  }, {})
+  const chips = document.createElement('div')
+  chips.className = 'tm-decoration-preview__chips'
+  Object.entries(counts).forEach(([label, count]) => {
+    const chip = document.createElement('span')
+    chip.className = 'tm-decoration-preview__chip'
+    chip.textContent = `${label} ${count}`
+    chips.append(chip)
+  })
+  preview.append(chips)
+
+  const list = document.createElement('div')
+  list.className = 'tm-decoration-preview__list'
+  preset.blocks.forEach(block => {
+    const item = document.createElement('div')
+    item.className = 'tm-decoration-preview__item'
+    const badge = document.createElement('span')
+    badge.className = 'tm-decoration-preview__badge'
+    badge.textContent = PAGE_DECORATION_BLOCK_LABEL[block.type] ?? block.type
+    const summary = document.createElement('span')
+    summary.className = 'tm-decoration-preview__summary'
+    summary.textContent = getDecorationBlockSummary(block, variables, schemaName)
+    item.append(badge, summary)
+    list.append(item)
+  })
+  preview.append(list)
+
+  return preview
 }
 
 function countBlocks(blocks: ITemplateSchema['blocks']): number {
@@ -87,11 +276,7 @@ const STATUS_FILTERS: Array<{ value: TemplateStatusFilter; label: string }> = [
 function getTemplateMetrics(schema: ITemplateSchema) {
   const index = buildTemplateFieldRuntimeIndex(schema)
   const dataSources = new Set<string>()
-  const allBlocks = [
-    ...(schema.header ?? []),
-    ...schema.blocks,
-    ...(schema.footer ?? [])
-  ]
+  const allBlocks = getResolvedTemplateBlocks(schema).all
   let businessFieldCount = 0
   index.all.forEach(node => {
     if (node.metadata?.businessCode || node.metadata?.exportPath) {
@@ -542,6 +727,7 @@ export class TemplateManager {
     actionsEl.className = 'tm-card__actions'
     actionsEl.append(
       this._createPrimaryAction(item),
+      this._createDecorationAction(item),
       this._createEditAction(item),
       this._createMoreAction(item)
     )
@@ -581,6 +767,18 @@ export class TemplateManager {
     return editBtn
   }
 
+  private _createDecorationAction(item: ITemplateWorkbenchItem): HTMLButtonElement {
+    const btn = document.createElement('button')
+    btn.className = 'tm-card__btn'
+    btn.textContent = '头尾方案'
+    btn.type = 'button'
+    btn.addEventListener('click', e => {
+      e.stopPropagation()
+      this._openPageDecorationDialog(item)
+    })
+    return btn
+  }
+
   private _createMoreAction(item: ITemplateWorkbenchItem): HTMLButtonElement {
     const moreBtn = document.createElement('button')
     moreBtn.className = 'tm-card__btn tm-card__btn--more'
@@ -598,6 +796,7 @@ export class TemplateManager {
     const menu = document.createElement('div')
     menu.className = 'tm-more-menu'
     const actions = [
+      { label: '套用页眉页脚', handler: () => this._openPageDecorationDialog(item) },
       { label: '版本管理', handler: () => this._openVersionCenter(item) },
       { label: '发版流程', handler: () => this._openReleaseFlow(item) },
       { label: '删除', danger: true, handler: () => this._deleteTemplate(item) }
@@ -834,8 +1033,265 @@ export class TemplateManager {
     })
   }
 
-  private _openDesigner(entry?: ITemplateRegistryEntry) {
-    new TemplateDesigner(
+  private _openPageDecorationDialog(item: ITemplateWorkbenchItem) {
+    const schema = JSON.parse(JSON.stringify(item.entry.schema)) as ITemplateSchema
+    const current = schema.layout?.pageDecorations
+    const state: {
+      headerId: string
+      headerMode: TemplatePageDecorationMode
+      footerId: string
+      footerMode: TemplatePageDecorationMode
+      variables: Partial<Record<TemplatePageDecorationVariableKey, string>>
+    } = {
+      headerId: current?.header?.id ?? '',
+      headerMode: current?.header?.mode ?? 'replace',
+      footerId: current?.footer?.id ?? '',
+      footerMode: current?.footer?.mode ?? 'replace',
+      variables: { ...(current?.variables ?? {}) }
+    }
+    const content = document.createElement('div')
+    content.className = 'tm-decoration-form'
+
+    const createRow = (
+      label: string,
+      input: HTMLElement,
+      hint?: string
+    ) => {
+      const row = document.createElement('div')
+      row.className = 'tm-decoration-form__row'
+      const title = document.createElement('label')
+      title.textContent = label
+      row.append(title, input)
+      if (hint) {
+        const note = document.createElement('small')
+        note.className = 'tm-decoration-form__note'
+        note.textContent = hint
+        row.append(note)
+      }
+      return row
+    }
+
+    const createSelect = (
+      options: Array<{ label: string; value: string }>,
+      value: string,
+      onChange: (value: string) => void
+    ) => {
+      const select = document.createElement('select')
+      select.className = 'tm-select tm-decoration-form__select'
+      options.forEach(option => {
+        const el = document.createElement('option')
+        el.value = option.value
+        el.textContent = option.label
+        if (option.value === value) el.selected = true
+        select.append(el)
+      })
+      select.addEventListener('change', () => onChange(select.value))
+      return select
+    }
+
+    const render = () => {
+      content.innerHTML = ''
+      const headerPreset = getTemplatePageDecorationPreset(state.headerId)
+      const footerPreset = getTemplatePageDecorationPreset(state.footerId)
+      const hint = document.createElement('div')
+      hint.className = 'tm-decoration-form__hint'
+      hint.textContent = item.builtIn
+        ? '内置模板套用头尾方案后会生成当前模板的可编辑草稿。'
+        : '可直接为当前模板切换或追加页眉页脚方案，无需进入字段级属性面板。'
+      content.append(hint)
+
+      const grid = document.createElement('div')
+      grid.className = 'tm-decoration-form__grid'
+
+      const modeOptions = [
+        { label: '替换当前区块', value: 'replace' },
+        { label: '前置合并', value: 'prepend' },
+        { label: '后置合并', value: 'append' }
+      ]
+
+      const headerSection = document.createElement('div')
+      headerSection.className = 'tm-decoration-form__section'
+      const headerTitle = document.createElement('div')
+      headerTitle.className = 'tm-decoration-form__title'
+      headerTitle.textContent = '页眉方案'
+      headerSection.append(headerTitle)
+      headerSection.append(
+        createRow(
+          '预定义页眉',
+          createSelect(
+            [
+              { label: '不使用预定义页眉', value: '' },
+              ...getTemplatePageDecorationPresets('header').map(preset => ({
+                label: preset.name,
+                value: preset.id
+              }))
+            ],
+            state.headerId,
+            value => {
+              state.headerId = value
+              render()
+            }
+          ),
+          headerPreset?.description
+        )
+      )
+      headerSection.append(
+        createRow(
+          '合并模式',
+          createSelect(modeOptions, state.headerMode, value => {
+            state.headerMode = value as TemplatePageDecorationMode
+            render()
+          })
+        )
+      )
+      headerSection.append(
+        createPageDecorationPreview(
+          '页眉',
+          headerPreset,
+          state.headerMode,
+          state.variables,
+          schema.name
+        )
+      )
+
+      const footerSection = document.createElement('div')
+      footerSection.className = 'tm-decoration-form__section'
+      const footerTitle = document.createElement('div')
+      footerTitle.className = 'tm-decoration-form__title'
+      footerTitle.textContent = '页脚方案'
+      footerSection.append(footerTitle)
+      footerSection.append(
+        createRow(
+          '预定义页脚',
+          createSelect(
+            [
+              { label: '不使用预定义页脚', value: '' },
+              ...getTemplatePageDecorationPresets('footer').map(preset => ({
+                label: preset.name,
+                value: preset.id
+              }))
+            ],
+            state.footerId,
+            value => {
+              state.footerId = value
+              render()
+            }
+          ),
+          footerPreset?.description
+        )
+      )
+      footerSection.append(
+        createRow(
+          '合并模式',
+          createSelect(modeOptions, state.footerMode, value => {
+            state.footerMode = value as TemplatePageDecorationMode
+            render()
+          })
+        )
+      )
+      footerSection.append(
+        createPageDecorationPreview(
+          '页脚',
+          footerPreset,
+          state.footerMode,
+          state.variables,
+          schema.name
+        )
+      )
+
+      grid.append(headerSection, footerSection)
+      content.append(grid)
+
+      const variableDefs = Array.from(
+        new Map(
+          [
+            ...(getTemplatePageDecorationPreset(state.headerId)?.variables ?? []),
+            ...(getTemplatePageDecorationPreset(state.footerId)?.variables ?? [])
+          ].map((item: ITemplatePageDecorationVariableDefinition) => [item.key, item])
+        ).values()
+      )
+
+      if (variableDefs.length) {
+        const variableSection = document.createElement('div')
+        variableSection.className = 'tm-decoration-form__section'
+        const variableTitle = document.createElement('div')
+        variableTitle.className = 'tm-decoration-form__title'
+        variableTitle.textContent = '方案变量'
+        variableSection.append(variableTitle)
+        variableDefs.forEach(def => {
+          const input = document.createElement('input')
+          input.type = 'text'
+          input.className = 'td-props__input tm-decoration-form__input'
+          input.value = state.variables[def.key] ?? ''
+          if (def.placeholder) input.placeholder = def.placeholder
+          input.addEventListener('input', () => {
+            state.variables[def.key] = input.value
+          })
+          input.addEventListener('change', () => render())
+          variableSection.append(createRow(def.label, input, def.description))
+        })
+        content.append(variableSection)
+      }
+    }
+
+    render()
+
+    TemplateFeedback.openDialog({
+      title: `${item.name} · 套用页眉页脚方案`,
+      content,
+      width: 720,
+      actions: [
+        {
+          label: '深度编辑',
+          onClick: () => this._openDesigner(item.entry, 'decorations')
+        },
+        {
+          label: '保存方案',
+          variant: 'primary',
+          onClick: () => {
+            const pageDecorations = normalizePageDecorationConfig({
+              header: state.headerId
+                ? { id: state.headerId, mode: state.headerMode }
+                : undefined,
+              footer: state.footerId
+                ? { id: state.footerId, mode: state.footerMode }
+                : undefined,
+              variables: state.variables
+            })
+            const layout = { ...(schema.layout ?? {}) }
+            if (pageDecorations) {
+              layout.pageDecorations = pageDecorations
+            } else {
+              delete layout.pageDecorations
+            }
+            const nextSchema: ITemplateSchema = {
+              ...schema,
+              layout
+            }
+            templateRegistry.register(
+              nextSchema,
+              item.entry.category,
+              false,
+              { note: '套用页眉页脚方案' }
+            )
+            this._refreshWorkbench()
+            TemplateFeedback.toast(
+              item.builtIn
+                ? '已生成包含头尾方案的可编辑草稿'
+                : '页眉页脚方案已保存',
+              'success'
+            )
+          }
+        }
+      ]
+    })
+  }
+
+  private _openDesigner(
+    entry?: ITemplateRegistryEntry,
+    focusLayoutSection?: 'paper' | 'margins' | 'decorations'
+  ) {
+    const designer = new TemplateDesigner(
       {
         onSave: (saved, category) => {
           templateRegistry.register(
@@ -849,6 +1305,9 @@ export class TemplateManager {
       },
       entry
     )
+    if (focusLayoutSection) {
+      requestAnimationFrame(() => designer.focusLayoutSection(focusLayoutSection))
+    }
   }
 
   private _importJSON() {

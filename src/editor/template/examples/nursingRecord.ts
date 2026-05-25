@@ -10,21 +10,20 @@ export const nursingRecordTemplate: ITemplateSchema = {
     defaultControlWidth: 120,
     textareaWidth: 400,
     sectionSpacing: 1,
+    pageDecorations: {
+      header: {
+        id: 'medical-record-header-classic'
+      },
+      footer: {
+        id: 'medical-record-footer-audit'
+      },
+      variables: {
+        hospitalName: '第一人民医院',
+        documentTitle: '护理记录单'
+      }
+    },
     titleStyle: { size: 18 }
   },
-  header: [
-    {
-      type: 'paragraph',
-      style: { size: 28 },
-      segments: [{ type: 'text', value: '第一人民医院' }]
-    },
-    {
-      type: 'paragraph',
-      style: { size: 18 },
-      segments: [{ type: 'text', value: '护理记录单' }]
-    },
-    { type: 'separator' }
-  ],
   blocks: [
     {
       type: 'fieldRow',
@@ -147,13 +146,6 @@ export const nursingRecordTemplate: ITemplateSchema = {
       fields: [
         { id: 'nurseName', type: 'text', label: '护士签名', placeholder: '请输入护士姓名', required: true }
       ]
-    }
-  ],
-  footer: [
-    {
-      type: 'paragraph',
-      style: { size: 12 },
-      segments: [{ type: 'text', value: 'canvas-editor template dsl demo' }]
     }
   ]
 }

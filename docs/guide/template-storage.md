@@ -291,3 +291,9 @@ POST /api/emr/documents/:documentId/migrate
 - 迁移中心存迁移记录表。
 
 这样模板可以持续演进，历史病历也不会被新模板“带坏”。
+
+## 九、延伸阅读
+
+如果要继续推进到产品评审和后端接口评审层面，可进一步阅读：
+
+- [病历存储与迁移落地方案](./emr-storage-implementation.md)

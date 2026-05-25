@@ -5,10 +5,12 @@ import type { ITemplateSchema, ITemplateBlock, ITemplateField, ITemplateLayout }
 import {
   compileTemplate,
   getPageConfig,
+  getResolvedTemplateBlocks,
   getTemplatePageNumberOptions,
   TEMPLATE_SYSTEM_VARIABLES,
   validateSchema
 } from '../../editor/template/index'
+import { getTemplatePageDecorationPreset } from '../../editor/template/TemplatePageDecoration'
 import { buildTemplateFieldRuntimeIndex } from '../../editor/template/TemplateRuntime'
 import { templateRegistry } from '../../editor/template/TemplateRegistry'
 import type { ITemplateRegistryEntry } from '../../editor/template/TemplateRegistry'
@@ -48,6 +50,12 @@ const ZONE_BLOCK_LABEL: Record<string, string> = {
   fieldRow: '字段行',
   separator: '分隔线',
   table: '表格'
+}
+
+const PAGE_DECORATION_MODE_LABEL: Record<'replace' | 'prepend' | 'append', string> = {
+  replace: '替换当前区块',
+  prepend: '前置合并',
+  append: '后置合并'
 }
 
 const PALETTE_DRAG_MIME = 'application/x-canvas-editor-blocks'
@@ -190,6 +198,7 @@ export class TemplateDesigner {
   private workspaceContextEl!: HTMLDivElement
   private workspacePaperBtn!: HTMLButtonElement
   private workspaceMarginsBtn!: HTMLButtonElement
+  private workspaceDecorationsBtn!: HTMLButtonElement
   private workspaceDetailsEl!: HTMLDivElement
   private workspaceDetailsToggleBtn!: HTMLButtonElement
   private palettePanelEl!: HTMLDivElement
@@ -587,17 +596,28 @@ export class TemplateDesigner {
     this.workspacePaperBtn.type = 'button'
     this.workspacePaperBtn.className = 'td-workspace__quick-btn'
     this.workspacePaperBtn.addEventListener('click', () =>
-      this._focusLayoutSection('paper')
+      this.focusLayoutSection('paper')
     )
 
     this.workspaceMarginsBtn = document.createElement('button')
     this.workspaceMarginsBtn.type = 'button'
     this.workspaceMarginsBtn.className = 'td-workspace__quick-btn'
     this.workspaceMarginsBtn.addEventListener('click', () =>
-      this._focusLayoutSection('margins')
+      this.focusLayoutSection('margins')
     )
 
-    quickActions.append(this.workspacePaperBtn, this.workspaceMarginsBtn)
+    this.workspaceDecorationsBtn = document.createElement('button')
+    this.workspaceDecorationsBtn.type = 'button'
+    this.workspaceDecorationsBtn.className = 'td-workspace__quick-btn'
+    this.workspaceDecorationsBtn.addEventListener('click', () =>
+      this.focusLayoutSection('decorations')
+    )
+
+    quickActions.append(
+      this.workspacePaperBtn,
+      this.workspaceMarginsBtn,
+      this.workspaceDecorationsBtn
+    )
 
     const tools = document.createElement('div')
     tools.className = 'td-workspace__tools'
@@ -741,7 +761,7 @@ export class TemplateDesigner {
     this.workspaceTemplateSummaryEl.textContent = category
   }
 
-  private _focusLayoutSection(section: 'paper' | 'margins') {
+  public focusLayoutSection(section: 'paper' | 'margins' | 'decorations') {
     this.selection = null
     this.canvas.setSelection(null)
     this.props.update(this._getActiveBlocks(), null)
@@ -801,6 +821,7 @@ export class TemplateDesigner {
     this.workspaceContextEl.textContent = `当前定位：${this._getSelectionSummary()}`
     this.workspacePaperBtn.textContent = `纸张 ${pageSizeLabel} · ${orientationLabel}`
     this.workspaceMarginsBtn.textContent = `边距 ${pageConfig.margins.join(' / ')}`
+    this.workspaceDecorationsBtn.textContent = '头尾方案'
     this.statusMetricsEl.innerHTML = ''
     ;([
       { label: '结构', value: this._countBlocks(allBlocks) },
@@ -1244,11 +1265,23 @@ export class TemplateDesigner {
     const bodyEl = zone === 'header' ? this.headerZoneBodyEl : this.footerZoneBodyEl
     const blocks = this._getZoneBlocks(zone)
     const countEl = zone === 'header' ? this.headerZoneCountEl : this.footerZoneCountEl
+    const presetRef = zone === 'header'
+      ? this.schema.layout?.pageDecorations?.header
+      : this.schema.layout?.pageDecorations?.footer
 
     if (!bodyEl) return
     bodyEl.innerHTML = ''
     if (countEl) {
-      countEl.textContent = blocks.length ? `(${blocks.length})` : '(空)'
+      countEl.textContent = blocks.length
+        ? `(${blocks.length})`
+        : presetRef?.id
+          ? '(预设)'
+          : '(空)'
+    }
+
+    const decorationNotice = this._createZoneDecorationNotice(zone)
+    if (decorationNotice) {
+      bodyEl.append(decorationNotice)
     }
 
     if (blocks.length === 0) {
@@ -1280,6 +1313,94 @@ export class TemplateDesigner {
       bodyEl.append(this._createZoneDropSlot(zone, i), this._renderZoneCard(zone, blocks[i], i))
     }
     bodyEl.append(this._createZoneDropSlot(zone, blocks.length, true))
+  }
+
+  private _createZoneDecorationNotice(zone: 'header' | 'footer'): HTMLDivElement | null {
+    const presetRef = zone === 'header'
+      ? this.schema.layout?.pageDecorations?.header
+      : this.schema.layout?.pageDecorations?.footer
+    if (!presetRef?.id) return null
+
+    const preset = getTemplatePageDecorationPreset(presetRef.id)
+    const notice = document.createElement('div')
+    notice.className = 'td-zone__decoration-notice'
+
+    const copy = document.createElement('div')
+    copy.className = 'td-zone__decoration-copy'
+
+    const title = document.createElement('strong')
+    title.textContent = `${zone === 'header' ? '页眉' : '页脚'}当前使用通用模板`
+
+    const desc = document.createElement('span')
+    desc.textContent = `已套用“${preset?.name ?? presetRef.id}” · ${PAGE_DECORATION_MODE_LABEL[presetRef.mode ?? 'replace']}。如需改具体内容，请先转为当前模板自己的可编辑区块。`
+
+    copy.append(title, desc)
+
+    const action = document.createElement('button')
+    action.type = 'button'
+    action.className = 'td-zone__decoration-action'
+    action.textContent = `转为可编辑${zone === 'header' ? '页眉' : '页脚'}`
+    action.addEventListener('click', () => {
+      void this._materializeZonePreset(zone)
+    })
+
+    notice.append(copy, action)
+    return notice
+  }
+
+  private async _materializeZonePreset(zone: 'header' | 'footer') {
+    const presetRef = zone === 'header'
+      ? this.schema.layout?.pageDecorations?.header
+      : this.schema.layout?.pageDecorations?.footer
+    if (!presetRef?.id) {
+      TemplateFeedback.toast(`当前${zone === 'header' ? '页眉' : '页脚'}未使用通用模板`, 'info')
+      return
+    }
+
+    const preset = getTemplatePageDecorationPreset(presetRef.id)
+    const confirmed = await TemplateFeedback.confirm({
+      title: `转为可编辑${zone === 'header' ? '页眉' : '页脚'}`,
+      message: `将把“${preset?.name ?? presetRef.id}”按当前合并模式展开为当前模板的${zone === 'header' ? '页眉' : '页脚'}区块。转换后可直接编辑，但不会再跟随后续通用模板变化。`,
+      tone: 'warning',
+      confirmText: '转为可编辑'
+    })
+    if (!confirmed) return
+
+    const fullSchema = this._buildFullSchema()
+    const resolved = getResolvedTemplateBlocks(fullSchema)
+    const nextBlocks = cloneTemplateBlocks(
+      zone === 'header' ? resolved.header : resolved.footer
+    )
+
+    const currentLayout = { ...(this.schema.layout ?? {}) }
+    const pageDecorations = currentLayout.pageDecorations
+      ? { ...currentLayout.pageDecorations }
+      : undefined
+    if (pageDecorations) {
+      delete pageDecorations[zone]
+    }
+
+    if (pageDecorations?.header || pageDecorations?.footer) {
+      currentLayout.pageDecorations = pageDecorations
+    } else {
+      delete currentLayout.pageDecorations
+    }
+
+    this.schema = {
+      ...this.schema,
+      layout: currentLayout
+    }
+    if (zone === 'header') {
+      this.headerBlocks = nextBlocks
+      this._rebuildZoneBody('header')
+    } else {
+      this.footerBlocks = nextBlocks
+      this._rebuildZoneBody('footer')
+    }
+    this.props.setLayout(currentLayout)
+    this._refreshDesignerState()
+    this._schedulePreviewRefresh()
+    TemplateFeedback.toast(`已转为可编辑${zone === 'header' ? '页眉' : '页脚'}区块`, 'success')
   }
 
   private _getZoneBlockSummary(block: ITemplateBlock): string {
@@ -1718,6 +1839,8 @@ export class TemplateDesigner {
     phase: PropertiesChangePhase = 'commit'
   ) {
     this.schema = { ...this.schema, layout }
+    this._rebuildZoneBody('header')
+    this._rebuildZoneBody('footer')
     this._refreshDesignerState()
     if (phase === 'input') return
     if (this._isPreviewVisible()) {

@@ -10,21 +10,22 @@ export const surgicalRecordTemplate: ITemplateSchema = {
     defaultControlWidth: 130,
     textareaWidth: 440,
     sectionSpacing: 1,
+    pageDecorations: {
+      header: {
+        id: 'surgical-record-header-operative'
+      },
+      footer: {
+        id: 'surgical-record-footer-audit'
+      },
+      variables: {
+        hospitalName: '第一人民医院',
+        documentTitle: '住院病历 · 手术记录',
+        departmentName: '普外科',
+        footerNote: '术后请及时完成归档与麻醉记录核对'
+      }
+    },
     titleStyle: { size: 18 }
   },
-  header: [
-    {
-      type: 'paragraph',
-      style: { size: 28 },
-      segments: [{ type: 'text', value: '第一人民医院' }]
-    },
-    {
-      type: 'paragraph',
-      style: { size: 18 },
-      segments: [{ type: 'text', value: '住院病历 · 手术记录' }]
-    },
-    { type: 'separator' }
-  ],
   blocks: [
     {
       type: 'fieldRow',
@@ -144,13 +145,6 @@ export const surgicalRecordTemplate: ITemplateSchema = {
           }]
         }
       ]
-    }
-  ],
-  footer: [
-    {
-      type: 'paragraph',
-      style: { size: 12 },
-      segments: [{ type: 'text', value: 'canvas-editor template dsl demo' }]
     }
   ]
 }

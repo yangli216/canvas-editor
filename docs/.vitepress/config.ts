@@ -91,6 +91,14 @@ export default defineConfig({
           { text: '官方插件', link: '/guide/plugin-internal' },
           { text: '开发调试工具', link: '/guide/devtools' }
         ]
+      },
+      {
+        text: '模板平台',
+        items: [
+          { text: '模板与病历数据存储方案', link: '/guide/template-storage' },
+          { text: '病历存储与迁移落地方案', link: '/guide/emr-storage-implementation' },
+          { text: '病程记录业务支撑分析', link: '/guide/progress-note-business-analysis' }
+        ]
       }
     ],
     socialLinks: [

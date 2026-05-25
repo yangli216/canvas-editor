@@ -7,6 +7,7 @@ import type {
   ITemplateFieldMetadata,
   ITemplateSchema
 } from './index'
+import { getResolvedTemplateBlocks } from './index'
 import {
   extractTemplateValues,
   type ITemplateExtractResult
@@ -349,6 +350,7 @@ function walkTemplateBlocks(
 export function buildTemplateFieldRuntimeIndex(
   schema: ITemplateSchema
 ): ITemplateFieldRuntimeIndex {
+  const resolved = getResolvedTemplateBlocks(schema)
   const index: ITemplateFieldRuntimeIndex = {
     all: [],
     byId: new Map(),
@@ -364,9 +366,9 @@ export function buildTemplateFieldRuntimeIndex(
     byExportPath: new Map()
   }
 
-  walkTemplateBlocks(schema.header ?? [], 'header', index, { containerBlockIds: [], path: 'header' })
-  walkTemplateBlocks(schema.blocks, 'main', index, { containerBlockIds: [], path: 'main' })
-  walkTemplateBlocks(schema.footer ?? [], 'footer', index, { containerBlockIds: [], path: 'footer' })
+  walkTemplateBlocks(resolved.header, 'header', index, { containerBlockIds: [], path: 'header' })
+  walkTemplateBlocks(resolved.main, 'main', index, { containerBlockIds: [], path: 'main' })
+  walkTemplateBlocks(resolved.footer, 'footer', index, { containerBlockIds: [], path: 'footer' })
 
   return index
 }
@@ -869,6 +871,7 @@ export class TemplateRuntime {
   }
 
   extract(): ITemplateStructuredExtractResult {
+    const resolved = getResolvedTemplateBlocks(this.schema)
     const extracted = extractTemplateValues(this.editor, this.schema)
     const flat = extracted.toRecord()
     const structured: Record<string, unknown> = {}
@@ -886,9 +889,9 @@ export class TemplateRuntime {
     const structuredByTag: Record<string, Record<string, unknown>> = {}
     const structuredByPermissionAndTag: Record<string, Record<string, Record<string, unknown>>> = {}
     const document = {
-      header: buildStructuredDocument(this.editor, this.schema.header ?? [], 'header', 'header', byTable),
-      main: buildStructuredDocument(this.editor, this.schema.blocks, 'main', 'main', byTable),
-      footer: buildStructuredDocument(this.editor, this.schema.footer ?? [], 'footer', 'footer', byTable)
+      header: buildStructuredDocument(this.editor, resolved.header, 'header', 'header', byTable),
+      main: buildStructuredDocument(this.editor, resolved.main, 'main', 'main', byTable),
+      footer: buildStructuredDocument(this.editor, resolved.footer, 'footer', 'footer', byTable)
     }
 
     this.index.all.forEach(node => {
