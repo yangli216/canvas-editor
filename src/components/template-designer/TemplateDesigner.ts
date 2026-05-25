@@ -821,7 +821,7 @@ export class TemplateDesigner {
     this.workspaceContextEl.textContent = `当前定位：${this._getSelectionSummary()}`
     this.workspacePaperBtn.textContent = `纸张 ${pageSizeLabel} · ${orientationLabel}`
     this.workspaceMarginsBtn.textContent = `边距 ${pageConfig.margins.join(' / ')}`
-    this.workspaceDecorationsBtn.textContent = '头尾方案'
+    this.workspaceDecorationsBtn.textContent = '页眉页脚'
     this.statusMetricsEl.innerHTML = ''
     ;([
       { label: '结构', value: this._countBlocks(allBlocks) },

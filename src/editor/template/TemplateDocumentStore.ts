@@ -4,6 +4,84 @@ import { buildFieldIndex } from './index'
 
 export type TemplateDocumentStatus = 'draft' | 'completed' | 'signed' | 'archived'
 export type TemplateDocumentMigrationMatchMode = 'fieldId' | 'businessCode' | 'exportPath'
+export type TemplateDocumentTraceAction =
+  | 'create'
+  | 'fork'
+  | 'writing_start'
+  | 'writing_update'
+  | 'writing_save'
+  | 'autosave'
+  | 'save'
+  | 'sign'
+  | 'review'
+  | 'status_change'
+  | 'migrate'
+  | 'manual'
+
+export interface ITemplateDocumentTraceFieldDiff {
+  fieldId: string
+  before: string | null
+  after: string | null
+}
+
+export interface ITemplateDocumentTraceEvent {
+  id: string
+  action: TemplateDocumentTraceAction
+  timestamp: number
+  operator?: string
+  source?: 'system' | 'templateManager' | 'editor' | 'autosave' | 'migration' | 'api'
+  title: string
+  summary?: string
+  templateId: string
+  templateVersion: string
+  statusBefore?: TemplateDocumentStatus
+  statusAfter?: TemplateDocumentStatus
+  changedFields?: ITemplateDocumentTraceFieldDiff[]
+  metadata?: Record<string, unknown>
+}
+
+export interface ITemplateDocumentTraceOptions {
+  action?: TemplateDocumentTraceAction
+  operator?: string
+  source?: ITemplateDocumentTraceEvent['source']
+  title?: string
+  summary?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface ITemplateDocumentWritingContext extends ITemplateDocumentTraceOptions {
+  role?: string
+  department?: string
+  workstation?: string
+}
+
+export interface ITemplateDocumentWritingInput extends ITemplateDocumentWritingContext {
+  flatValues?: Record<string, string | null>
+  editorState?: unknown
+  commit?: boolean
+  reason?: string
+}
+
+export interface ITemplateDocumentWritingSummary {
+  documentId: string
+  patientId?: string
+  encounterId?: string
+  title?: string
+  status: TemplateDocumentStatus
+  templateId: string
+  templateVersion: string
+  firstWrittenAt?: number
+  lastWrittenAt?: number
+  latestEvent?: ITemplateDocumentTraceEvent
+  writers: string[]
+  changedFieldIds: string[]
+  fieldChangeCount: number
+  writingEventCount: number
+  autosaveCount: number
+  saveCount: number
+  signCount: number
+  reviewCount: number
+}
 
 export interface ITemplateDocumentTemplateBinding {
   id: string
@@ -87,6 +165,7 @@ export interface ITemplateDocumentRecord {
   content: ITemplateDocumentContent
   lineage?: ITemplateDocumentLineage
   migrationHistory: ITemplateDocumentMigrationRecord[]
+  traceEvents: ITemplateDocumentTraceEvent[]
 }
 
 export interface ICreateTemplateDocumentOptions {
@@ -100,12 +179,14 @@ export interface ICreateTemplateDocumentOptions {
   flatValues?: Record<string, string | null>
   structuredValues?: Record<string, unknown>
   editorState?: unknown
+  trace?: ITemplateDocumentTraceOptions
 }
 
 export interface ITemplateDocumentMigrationOptions {
   note?: string
   allowPartial?: boolean
   templateStatus?: TemplatePublishStatus
+  trace?: ITemplateDocumentTraceOptions
 }
 
 export interface ITemplateDocumentMigrationResult {
@@ -157,6 +238,7 @@ export interface ITemplateDocumentWorkflowPolicy {
 export interface ITemplateDocumentAutosaveInput {
   flatValues?: Record<string, string | null>
   editorState?: unknown
+  trace?: ITemplateDocumentTraceOptions
 }
 
 export interface ITemplateDocumentAutosavePayload {
@@ -187,6 +269,7 @@ export interface ITemplateDocumentPersistenceRecord {
   editorState?: unknown
   lineage?: ITemplateDocumentLineage
   migrationHistory: ITemplateDocumentMigrationRecord[]
+  traceEvents?: ITemplateDocumentTraceEvent[]
 }
 
 export interface IForkTemplateDocumentOptions {
@@ -195,6 +278,7 @@ export interface IForkTemplateDocumentOptions {
   status?: TemplateDocumentStatus
   reason?: string
   resetMigrationHistory?: boolean
+  trace?: ITemplateDocumentTraceOptions
 }
 
 export interface ITemplateDocumentMigrationPreview {
@@ -263,6 +347,104 @@ function createDocumentId() {
   return `template-document-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function createTraceId() {
+  return `trace-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function createFieldDiffs(
+  before: Record<string, string | null> = {},
+  after: Record<string, string | null> = {}
+): ITemplateDocumentTraceFieldDiff[] {
+  const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]))
+  return keys
+    .filter(key => (before[key] ?? null) !== (after[key] ?? null))
+    .map(key => ({
+      fieldId: key,
+      before: before[key] ?? null,
+      after: after[key] ?? null
+    }))
+}
+
+function createTraceEvent(
+  record: ITemplateDocumentRecord,
+  action: TemplateDocumentTraceAction,
+  options: ITemplateDocumentTraceOptions & {
+    statusBefore?: TemplateDocumentStatus
+    statusAfter?: TemplateDocumentStatus
+    changedFields?: ITemplateDocumentTraceFieldDiff[]
+  } = {}
+): ITemplateDocumentTraceEvent {
+  const defaultTitle: Record<TemplateDocumentTraceAction, string> = {
+    create: '创建病历实例',
+    fork: '复制病历实例',
+    writing_start: '开始书写病历',
+    writing_update: '书写病历内容',
+    writing_save: '保存书写内容',
+    autosave: '自动暂存',
+    save: '保存病历内容',
+    sign: '医生签名',
+    review: '病历复核',
+    status_change: '变更病历状态',
+    migrate: '迁移模板版本',
+    manual: '手工留痕'
+  }
+  return {
+    id: createTraceId(),
+    action,
+    timestamp: Date.now(),
+    operator: options.operator ?? '系统',
+    source: options.source ?? 'system',
+    title: options.title ?? defaultTitle[action],
+    summary: options.summary,
+    templateId: record.template.id,
+    templateVersion: record.template.version,
+    statusBefore: options.statusBefore,
+    statusAfter: options.statusAfter,
+    changedFields: options.changedFields,
+    metadata: options.metadata
+  }
+}
+
+function appendTraceEvent(
+  record: ITemplateDocumentRecord,
+  event: ITemplateDocumentTraceEvent
+) {
+  record.traceEvents = [...(record.traceEvents ?? []), event]
+}
+
+function createWritingMetadata(
+  context: ITemplateDocumentWritingContext | ITemplateDocumentWritingInput
+): Record<string, unknown> | undefined {
+  const metadata = {
+    ...(context.metadata ?? {}),
+    ...(context.role ? { role: context.role } : {}),
+    ...(context.department ? { department: context.department } : {}),
+    ...(context.workstation ? { workstation: context.workstation } : {})
+  }
+  return Object.keys(metadata).length ? metadata : undefined
+}
+
+function getTraceTimeline(events: ITemplateDocumentTraceEvent[]) {
+  return cloneUnknown(events)
+    .map((event, index) => ({ event, index }))
+    .sort((a, b) => b.event.timestamp - a.event.timestamp || b.index - a.index)
+    .map(item => item.event)
+}
+
+function isWritingTraceAction(action: TemplateDocumentTraceAction) {
+  return [
+    'writing_start',
+    'writing_update',
+    'writing_save',
+    'autosave',
+    'save',
+    'sign',
+    'review',
+    'manual',
+    'status_change'
+  ].includes(action)
+}
+
 function toPersistenceRecord(
   record: ITemplateDocumentRecord
 ): ITemplateDocumentPersistenceRecord {
@@ -284,7 +466,8 @@ function toPersistenceRecord(
     structuredValues: cloneUnknown(record.content.structuredValues),
     editorState: cloneUnknown(record.content.editorState),
     lineage: cloneUnknown(record.lineage),
-    migrationHistory: cloneUnknown(record.migrationHistory)
+    migrationHistory: cloneUnknown(record.migrationHistory),
+    traceEvents: cloneUnknown(record.traceEvents)
   }
 }
 
@@ -313,7 +496,8 @@ function fromPersistenceRecord(
       editorState: cloneUnknown(record.editorState)
     },
     lineage: cloneUnknown(record.lineage),
-    migrationHistory: cloneUnknown(record.migrationHistory)
+    migrationHistory: cloneUnknown(record.migrationHistory),
+    traceEvents: cloneUnknown(record.traceEvents ?? [])
   }
 }
 
@@ -552,8 +736,17 @@ export class TemplateDocumentStore {
           ? JSON.parse(JSON.stringify(options.editorState))
           : undefined
       },
-      migrationHistory: []
+      migrationHistory: [],
+      traceEvents: []
     }
+    appendTraceEvent(record, createTraceEvent(record, 'create', {
+      source: options.trace?.source ?? 'templateManager',
+      operator: options.trace?.operator,
+      title: options.trace?.title,
+      summary: options.trace?.summary ?? `绑定模板 ${record.template.name} v${record.template.version}`,
+      statusAfter: record.status,
+      metadata: options.trace?.metadata
+    }))
     this.records.set(record.id, record)
     this._persist()
     return cloneRecord(record)
@@ -587,8 +780,21 @@ export class TemplateDocumentStore {
       },
       migrationHistory: options.resetMigrationHistory !== false
         ? []
-        : cloneUnknown(current.migrationHistory)
+        : cloneUnknown(current.migrationHistory),
+      traceEvents: []
     }
+    appendTraceEvent(forked, createTraceEvent(forked, 'fork', {
+      source: options.trace?.source ?? 'api',
+      operator: options.trace?.operator,
+      title: options.trace?.title,
+      summary: options.trace?.summary ?? `从病历 ${current.id} 复制`,
+      statusAfter: forked.status,
+      metadata: {
+        sourceDocumentId: current.id,
+        reason: options.reason,
+        ...(options.trace?.metadata ?? {})
+      }
+    }))
 
     this.records.set(forked.id, forked)
     this._persist()
@@ -606,9 +812,198 @@ export class TemplateDocumentStore {
       .map(record => cloneRecord(record))
   }
 
-  save(record: ITemplateDocumentRecord): ITemplateDocumentRecord {
+  getTraceTimeline(id: string): ITemplateDocumentTraceEvent[] {
+    const current = this.records.get(id)
+    if (!current) return []
+    return getTraceTimeline(current.traceEvents ?? [])
+  }
+
+  getFieldTraceTimeline(
+    id: string,
+    fieldId: string
+  ): ITemplateDocumentTraceEvent[] {
+    return this.getTraceTimeline(id)
+      .filter(event => event.changedFields?.some(diff => diff.fieldId === fieldId))
+  }
+
+  getWritingTraceSummary(id: string): ITemplateDocumentWritingSummary | null {
+    const current = this.records.get(id)
+    if (!current) return null
+    const timeline = getTraceTimeline(current.traceEvents ?? [])
+    const writingEvents = timeline.filter(event => isWritingTraceAction(event.action))
+    const chronologicalEvents = [...writingEvents].reverse()
+    const changedFieldIds = new Set<string>()
+    let fieldChangeCount = 0
+    writingEvents.forEach(event => {
+      event.changedFields?.forEach(diff => {
+        changedFieldIds.add(diff.fieldId)
+        fieldChangeCount += 1
+      })
+    })
+    return {
+      documentId: current.id,
+      patientId: current.patientId,
+      encounterId: current.encounterId,
+      title: current.title,
+      status: current.status,
+      templateId: current.template.id,
+      templateVersion: current.template.version,
+      firstWrittenAt: chronologicalEvents[0]?.timestamp,
+      lastWrittenAt: writingEvents[0]?.timestamp,
+      latestEvent: writingEvents[0] ? cloneUnknown(writingEvents[0]) : undefined,
+      writers: Array.from(new Set(
+        writingEvents
+          .map(event => event.operator)
+          .filter((operator): operator is string => Boolean(operator))
+      )),
+      changedFieldIds: Array.from(changedFieldIds),
+      fieldChangeCount,
+      writingEventCount: writingEvents.length,
+      autosaveCount: writingEvents.filter(event => event.action === 'autosave').length,
+      saveCount: writingEvents.filter(event => (
+        event.action === 'save' || event.action === 'writing_save'
+      )).length,
+      signCount: writingEvents.filter(event => event.action === 'sign').length,
+      reviewCount: writingEvents.filter(event => event.action === 'review').length
+    }
+  }
+
+  startWriting(
+    id: string,
+    context: ITemplateDocumentWritingContext = {}
+  ): ITemplateDocumentTraceEvent | null {
+    return this.appendTrace(id, {
+      action: 'writing_start',
+      source: context.source ?? 'editor',
+      operator: context.operator,
+      title: context.title,
+      summary: context.summary ?? '医生打开病历并开始书写',
+      metadata: createWritingMetadata(context)
+    })
+  }
+
+  write(
+    id: string,
+    input: ITemplateDocumentWritingInput
+  ): ITemplateDocumentRecord | null {
+    const current = this.records.get(id)
+    if (!current) return null
+    const nextFlatValues = input.flatValues
+      ? { ...current.content.flatValues, ...input.flatValues }
+      : current.content.flatValues
+    const changedFields = createFieldDiffs(current.content.flatValues, nextFlatValues)
+    const action: TemplateDocumentTraceAction = input.commit
+      ? 'writing_save'
+      : 'writing_update'
+    const nextRecord: ITemplateDocumentRecord = {
+      ...cloneRecord(current),
+      updatedAt: Date.now(),
+      content: {
+        ...cloneUnknown(current.content),
+        flatValues: { ...nextFlatValues },
+        ...(Object.prototype.hasOwnProperty.call(input, 'editorState')
+          ? { editorState: cloneUnknown(input.editorState) }
+          : {})
+      }
+    }
+    appendTraceEvent(nextRecord, createTraceEvent(nextRecord, action, {
+      source: input.source ?? 'editor',
+      operator: input.operator,
+      title: input.title,
+      summary: input.summary ?? (changedFields.length
+        ? `医生书写 ${changedFields.length} 个字段`
+        : '医生更新编辑状态'),
+      changedFields,
+      metadata: {
+        ...(createWritingMetadata(input) ?? {}),
+        ...(input.reason ? { reason: input.reason } : {})
+      }
+    }))
+    this.records.set(id, nextRecord)
+    this._persist()
+    return cloneRecord(nextRecord)
+  }
+
+  signDocument(
+    id: string,
+    context: ITemplateDocumentWritingContext = {}
+  ): ITemplateDocumentStatusTransitionResult | null {
+    return this.setStatus(id, 'signed', {
+      ...context,
+      action: 'sign',
+      source: context.source ?? 'editor',
+      title: context.title ?? '医生签名',
+      summary: context.summary ?? '医生完成病历签名',
+      metadata: createWritingMetadata(context)
+    })
+  }
+
+  reviewWriting(
+    id: string,
+    context: ITemplateDocumentWritingContext = {}
+  ): ITemplateDocumentTraceEvent | null {
+    return this.appendTrace(id, {
+      action: 'review',
+      source: context.source ?? 'editor',
+      operator: context.operator,
+      title: context.title ?? '病历复核',
+      summary: context.summary ?? '完成病历书写复核',
+      metadata: createWritingMetadata(context)
+    })
+  }
+
+  appendTrace(
+    id: string,
+    trace: ITemplateDocumentTraceOptions & {
+      action?: TemplateDocumentTraceAction
+      changedFields?: ITemplateDocumentTraceFieldDiff[]
+      statusBefore?: TemplateDocumentStatus
+      statusAfter?: TemplateDocumentStatus
+    }
+  ): ITemplateDocumentTraceEvent | null {
+    const current = this.records.get(id)
+    if (!current) return null
+    const event = createTraceEvent(current, trace.action ?? 'manual', {
+      source: trace.source ?? 'api',
+      operator: trace.operator,
+      title: trace.title,
+      summary: trace.summary,
+      metadata: trace.metadata,
+      changedFields: trace.changedFields,
+      statusBefore: trace.statusBefore,
+      statusAfter: trace.statusAfter
+    })
+    appendTraceEvent(current, event)
+    current.updatedAt = Date.now()
+    this.records.set(id, current)
+    this._persist()
+    return cloneUnknown(event)
+  }
+
+  save(
+    record: ITemplateDocumentRecord,
+    trace: ITemplateDocumentTraceOptions = {}
+  ): ITemplateDocumentRecord {
+    const current = this.records.get(record.id)
     const nextRecord = cloneRecord(record)
     nextRecord.updatedAt = Date.now()
+    const changedFields = createFieldDiffs(
+      current?.content.flatValues,
+      nextRecord.content.flatValues
+    )
+    nextRecord.traceEvents = current?.traceEvents
+      ? cloneUnknown(current.traceEvents)
+      : cloneUnknown(nextRecord.traceEvents ?? [])
+    appendTraceEvent(nextRecord, createTraceEvent(nextRecord, 'save', {
+      source: trace.source ?? 'editor',
+      operator: trace.operator,
+      title: trace.title,
+      summary: trace.summary ?? (changedFields.length
+        ? `保存 ${changedFields.length} 个字段变更`
+        : '保存病历内容'),
+      changedFields,
+      metadata: trace.metadata
+    }))
     this.records.set(nextRecord.id, nextRecord)
     this._persist()
     return cloneRecord(nextRecord)
@@ -633,6 +1028,19 @@ export class TemplateDocumentStore {
       }
     }
 
+    const changedFields = content.flatValues
+      ? createFieldDiffs(current.content.flatValues, nextRecord.content.flatValues)
+      : []
+    appendTraceEvent(nextRecord, createTraceEvent(nextRecord, 'autosave', {
+      source: content.trace?.source ?? 'autosave',
+      operator: content.trace?.operator,
+      title: content.trace?.title,
+      summary: content.trace?.summary ?? (changedFields.length
+        ? `自动暂存 ${changedFields.length} 个字段变更`
+        : '自动暂存编辑状态'),
+      changedFields,
+      metadata: content.trace?.metadata
+    }))
     this.records.set(id, nextRecord)
     this._persist()
     return cloneRecord(nextRecord)
@@ -717,6 +1125,20 @@ export class TemplateDocumentStore {
         }
       ]
     }
+    appendTraceEvent(migrated, createTraceEvent(migrated, 'migrate', {
+      source: options.trace?.source ?? 'migration',
+      operator: options.trace?.operator,
+      title: options.trace?.title,
+      summary: options.trace?.summary ?? `模板从 v${plan.fromTemplateVersion} 迁移到 v${plan.toTemplateVersion}`,
+      changedFields: createFieldDiffs(current.content.flatValues, plan.nextValues),
+      metadata: {
+        note: options.note,
+        mappings: plan.mappings.length,
+        unresolvedFieldIds: plan.unresolvedFields.map(item => item.fieldId),
+        droppedFieldIds: plan.droppedFields.map(item => item.fieldId),
+        ...(options.trace?.metadata ?? {})
+      }
+    }))
     this.records.set(id, migrated)
     this._persist()
     return {
@@ -737,7 +1159,8 @@ export class TemplateDocumentStore {
 
   setStatus(
     id: string,
-    nextStatus: TemplateDocumentStatus
+    nextStatus: TemplateDocumentStatus,
+    trace: ITemplateDocumentTraceOptions = {}
   ): ITemplateDocumentStatusTransitionResult | null {
     const current = this.records.get(id)
     if (!current) return null
@@ -763,6 +1186,15 @@ export class TemplateDocumentStore {
       status: nextStatus,
       updatedAt: Date.now()
     }
+    appendTraceEvent(nextRecord, createTraceEvent(nextRecord, trace.action ?? 'status_change', {
+      source: trace.source ?? 'api',
+      operator: trace.operator,
+      title: trace.title,
+      summary: trace.summary ?? `状态从 ${previousStatus} 变更为 ${nextStatus}`,
+      statusBefore: previousStatus,
+      statusAfter: nextStatus,
+      metadata: trace.metadata
+    }))
 
     this.records.set(id, nextRecord)
     this._persist()
@@ -814,7 +1246,10 @@ export class TemplateDocumentStore {
       const stored = JSON.parse(raw) as ITemplateDocumentRecord[]
       this.records.clear()
       stored.forEach(record => {
-        this.records.set(record.id, cloneRecord(record))
+        this.records.set(record.id, {
+          ...cloneRecord(record),
+          traceEvents: cloneUnknown(record.traceEvents ?? [])
+        })
       })
     } catch {
       this.records.clear()

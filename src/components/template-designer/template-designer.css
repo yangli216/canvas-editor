@@ -1867,6 +1867,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  overscroll-behavior: contain;
 }
 
 .tm-dialog {
@@ -1949,6 +1950,7 @@
 .tm-body {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 20px 24px;
 }
 
@@ -2103,6 +2105,7 @@
   border-right: 1px solid #e2e6ed;
   background: #fbfcfe;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .tm-sidebar__section {
@@ -2165,6 +2168,111 @@
   line-height: 1.5;
   color: #7a8494;
   word-break: break-word;
+}
+
+.tm-governance-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tm-governance-form__row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.tm-governance-form__row label {
+  color: #5f6b7a;
+  font-size: 12px;
+}
+
+.tm-governance-form__input {
+  width: 100%;
+}
+
+.tm-admission-report {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tm-admission-report__list,
+.tm-trial-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tm-trace-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e2e6ed;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.tm-trace-group__title {
+  color: #303744;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tm-admission-report__item {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid #e2e6ed;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.tm-admission-report__item span {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #3368d5;
+  font-size: 10px;
+  text-align: center;
+}
+
+.tm-admission-report__item strong {
+  min-width: 0;
+  color: #303744;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tm-admission-report__item small {
+  color: #8b95a5;
+  font-size: 11px;
+}
+
+.tm-admission-report__item--blocker {
+  border-color: #f0d5d1;
+  background: #fff6f5;
+}
+
+.tm-admission-report__item--blocker span {
+  background: #ffe8e5;
+  color: #b42318;
+}
+
+.tm-admission-report__item--warning {
+  border-color: #f3dfb3;
+  background: #fffaf0;
+}
+
+.tm-admission-report__item--warning span {
+  background: #fff1cc;
+  color: #9a5a00;
 }
 
 .tm-main {
@@ -2407,6 +2515,22 @@
   margin-bottom: 8px;
 }
 
+.tm-card__ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+
+.tm-card__ops span {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #f6f8fb;
+  color: #687386;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .tm-card__metric {
   padding: 7px 8px;
   border: 1px solid #edf1f6;
@@ -2430,20 +2554,30 @@
 .tm-card__updated {
   color: #8b95a5;
   font-size: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .tm-card__footer {
   margin-top: auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .tm-card__actions {
+  display: flex;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
   gap: 4px;
 }
 
 .tm-card__btn {
+  flex: 0 0 auto;
   min-width: 38px;
   padding: 2px 8px;
   border-radius: 6px;
+  white-space: nowrap;
 }
 
 .tm-card__btn--more {
@@ -2472,7 +2606,7 @@
 .tm-more-menu {
   position: fixed;
   z-index: 9999;
-  width: 126px;
+  width: 136px;
   padding: 5px;
   border: 1px solid #e2e6ed;
   border-radius: 5px;
@@ -2728,15 +2862,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
   background: rgba(33, 40, 53, 0.36);
 }
 
 .td-feedback {
   width: 420px;
   max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
   border-radius: 7px;
   background: #fff;
   box-shadow: 0 16px 42px rgba(33, 40, 53, 0.22);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
@@ -2790,10 +2929,25 @@
 }
 
 .td-feedback__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 16px;
   color: #596273;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.tm-release-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tm-release-flow .tm-admission-report {
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .td-feedback__btn--primary {

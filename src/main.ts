@@ -27,8 +27,10 @@ import { formatPrismToken } from './utils/prism'
 import { Signature } from './components/signature/Signature'
 import { debounce, nextTick, scrollIntoView } from './utils'
 import { TemplateManager } from './components/template-designer/TemplateManager'
+import { MedicalRecordTracePanel } from './components/medical-record/MedicalRecordTracePanel'
 import { registerBuiltInTemplates } from './editor/template/examples/index'
 import { compileTemplate, getTemplatePageNumberOptions } from './editor/template/index'
+import { TemplateDocumentStore } from './editor/template/TemplateDocumentStore'
 
 window.onload = function () {
   // 注册内置模板
@@ -49,6 +51,12 @@ window.onload = function () {
   Reflect.set(window, 'editor', instance)
   // canvas-editor-devtools使用
   Reflect.set(window, '__CANVAS_EDITOR_INSTANCE__', instance)
+  const templateDocumentStore = new TemplateDocumentStore()
+  const tracePanelContainer = document.querySelector<HTMLElement>('.medical-record-trace')!
+  const medicalTracePanel = new MedicalRecordTracePanel(
+    tracePanelContainer,
+    templateDocumentStore
+  )
 
   // 菜单弹窗销毁
   window.addEventListener(
@@ -72,12 +80,16 @@ window.onload = function () {
   const templateManagerBtn = document.querySelector<HTMLButtonElement>('.btn-template-manager')!
   templateManagerBtn.onclick = function () {
     new TemplateManager({
-      onApply: schema => {
+      documentStore: templateDocumentStore,
+      onApply: (schema, record) => {
         const data = compileTemplate(schema)
         instance.command.executeSetValue(data)
         instance.command.executeUpdateOptions({
           pageNumber: getTemplatePageNumberOptions(schema)
         })
+        if (record) {
+          medicalTracePanel.bindDocument(record, schema)
+        }
       }
     })
   }

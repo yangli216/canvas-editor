@@ -104,9 +104,16 @@ import type {
   ITemplateDocumentStatusTransitionPolicyContext,
   ITemplateDocumentStatusTransitionResult,
   ITemplateDocumentTemplateBinding,
+  ITemplateDocumentTraceEvent,
+  ITemplateDocumentTraceFieldDiff,
+  ITemplateDocumentTraceOptions,
+  ITemplateDocumentWritingContext,
+  ITemplateDocumentWritingInput,
+  ITemplateDocumentWritingSummary,
   ITemplateDocumentWorkflowPolicy,
   ITemplateDocumentWorkflowPolicyDecision,
   TemplateDocumentMigrationMatchMode,
+  TemplateDocumentTraceAction,
   TemplateDocumentStatus
 } from './template/TemplateDocumentStore'
 import {
@@ -114,6 +121,14 @@ import {
   createTemplateRuntime,
   TemplateRuntime
 } from './template/TemplateRuntime'
+import { buildTemplateAdmissionReport } from './template/TemplateGovernance'
+import type {
+  ITemplateAdmissionIssue,
+  ITemplateAdmissionReport,
+  ITemplateClinicalImpactSummary,
+  TemplateAdmissionIssueCategory,
+  TemplateAdmissionIssueLevel
+} from './template/TemplateGovernance'
 import type {
   ITemplateFieldSelector,
   ITemplateRuntimeValuePatch,
@@ -279,6 +294,7 @@ export {
   TEMPLATE_SYSTEM_VARIABLES,
   analyzeTemplateDocumentMigration,
   TemplateDocumentStore,
+  buildTemplateAdmissionReport,
   buildTemplateFieldRuntimeIndex,
   createTemplateRuntime,
   TemplateRuntime,
@@ -394,6 +410,12 @@ export type {
   ITemplateDocumentStatusTransitionPolicyContext,
   ITemplateDocumentStatusTransitionResult,
   ITemplateDocumentTemplateBinding,
+  ITemplateDocumentTraceEvent,
+  ITemplateDocumentTraceFieldDiff,
+  ITemplateDocumentTraceOptions,
+  ITemplateDocumentWritingContext,
+  ITemplateDocumentWritingInput,
+  ITemplateDocumentWritingSummary,
   ITemplateDocumentWorkflowPolicy,
   ITemplateDocumentWorkflowPolicyDecision,
   ITemplateFieldSelector,
@@ -406,6 +428,9 @@ export type {
   ITemplateRuntimeDataBindingIssue,
   ITemplateRuntimeDataBindingInspection,
   ITemplateStructuredExtractResult,
+  ITemplateAdmissionIssue,
+  ITemplateAdmissionReport,
+  ITemplateClinicalImpactSummary,
   ITemplateDataAdapter,
   ITemplateDataAdapterContext,
   ITemplateDataAdapterFieldResolution,
@@ -416,7 +441,10 @@ export type {
   IMockHisPatient,
   TemplatePageDecorationMode,
   TemplateDocumentMigrationMatchMode,
+  TemplateDocumentTraceAction,
   TemplateDocumentStatus,
+  TemplateAdmissionIssueCategory,
+  TemplateAdmissionIssueLevel,
   TemplateConditionOperator,
   TemplateFieldValueRenderMode,
   TemplateFieldType,

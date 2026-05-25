@@ -151,6 +151,45 @@ describe('template registry lifecycle', () => {
     expect(latestPublished?.schemaSnapshot?.version).toBe('1.0.0')
   })
 
+  it('会维护资产信息、试运行记录和操作日志', () => {
+    const id = `registry-governance-${Date.now()}`
+    const schema = createSchema(id)
+    templateRegistry.register(schema, '住院记录', false, {
+      asset: {
+        department: '心内科',
+        documentType: '入院记录',
+        owner: '张医生'
+      }
+    })
+
+    templateRegistry.updateAssetMetadata(id, {
+      owner: '李医生',
+      applicableRoles: ['医生']
+    }, '模板管理员')
+    const trialRun = templateRegistry.addTrialRun(id, {
+      scenario: '住院入院记录',
+      patientId: 'P-1001',
+      department: '心内科',
+      status: 'passed',
+      summary: 'mock 患者回填通过'
+    }, '模板管理员')
+    templateRegistry.publish(id, {
+      reason: '首版上线',
+      impactScope: '心内科住院病历',
+      verifier: '质控员',
+      note: '验证通过后发布'
+    })
+
+    const entry = templateRegistry.getEntry(id)!
+    expect(entry.asset?.owner).toBe('李医生')
+    expect(trialRun?.scenario).toBe('住院入院记录')
+    expect(templateRegistry.getTrialRuns(id)).toHaveLength(1)
+    expect(templateRegistry.getLatestPublishedRecord(id)?.releaseNote?.verifier).toBe('质控员')
+    expect(templateRegistry.getAuditLogs(id).some(record => record.action === 'asset_update')).toBe(true)
+    expect(templateRegistry.getAuditLogs(id).some(record => record.action === 'trial_run')).toBe(true)
+    expect(templateRegistry.getAuditLogs(id).some(record => record.action === 'publish')).toBe(true)
+  })
+
   it('刷新后本地保存的同 id 模板可以覆盖内置模板', () => {
     const id = `registry-storage-override-${Date.now()}`
     const builtInSchema = createSchema(id)

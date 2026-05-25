@@ -3,10 +3,59 @@ import { buildFieldIndex } from './index'
 
 export type TemplatePublishStatus = 'draft' | 'review' | 'published' | 'archived'
 
+export type TemplateAssetLifecycleStatus = 'planning' | 'trial' | 'online' | 'suspended'
+export type TemplateAuditAction =
+  | 'create'
+  | 'save'
+  | 'asset_update'
+  | 'trial_run'
+  | 'submit_review'
+  | 'publish'
+  | 'withdraw'
+  | 'rollback'
+
+export interface ITemplateAssetMetadata {
+  hospitalArea?: string
+  department?: string
+  documentType?: string
+  owner?: string
+  applicableRoles?: string[]
+  scenario?: string
+  lifecycleStatus?: TemplateAssetLifecycleStatus
+}
+
+export interface ITemplateReleaseNote {
+  note?: string
+  reason?: string
+  impactScope?: string
+  verifier?: string
+  plannedAt?: string
+}
+
+export interface ITemplateTrialRunRecord {
+  id: string
+  scenario: string
+  patientId?: string
+  department?: string
+  status: 'passed' | 'failed'
+  summary?: string
+  diagnostics?: string[]
+  timestamp: number
+}
+
+export interface ITemplateAuditRecord {
+  action: TemplateAuditAction
+  timestamp: number
+  operator?: string
+  note?: string
+  detail?: string
+}
+
 export interface ITemplateVersionRecord {
   status: TemplatePublishStatus
   version: string
   note?: string
+  releaseNote?: ITemplateReleaseNote
   schemaSnapshot?: ITemplateSchema
   timestamp: number
 }
@@ -19,6 +68,9 @@ export interface ITemplateRegistryEntry {
   updatedAt: number
   status: TemplatePublishStatus
   versionHistory: ITemplateVersionRecord[]
+  asset?: ITemplateAssetMetadata
+  trialRuns: ITemplateTrialRunRecord[]
+  auditLogs: ITemplateAuditRecord[]
 }
 
 export interface ITemplateListItem {
@@ -32,9 +84,31 @@ export interface ITemplateListItem {
 
 export interface ITemplateRegisterOptions {
   note?: string
+  operator?: string
+  asset?: ITemplateAssetMetadata
 }
 
 const STORAGE_KEY = 'canvas-editor:templates'
+
+function createDefaultAssetMetadata(
+  schema: ITemplateSchema,
+  category: string,
+  existing?: ITemplateAssetMetadata
+): ITemplateAssetMetadata {
+  return {
+    hospitalArea: existing?.hospitalArea ?? '默认院区',
+    department: existing?.department ?? category,
+    documentType: existing?.documentType ?? category,
+    owner: existing?.owner ?? '模板管理员',
+    applicableRoles: existing?.applicableRoles ?? ['医生', '护士'],
+    scenario: existing?.scenario ?? schema.description,
+    lifecycleStatus: existing?.lifecycleStatus ?? 'planning'
+  }
+}
+
+function cloneEntry(entry: ITemplateRegistryEntry): ITemplateRegistryEntry {
+  return JSON.parse(JSON.stringify(entry)) as ITemplateRegistryEntry
+}
 
 function collectConditions(schema: ITemplateSchema): ITemplateCondition[] {
   const result: ITemplateCondition[] = []
@@ -86,6 +160,21 @@ function validateSchema(schema: ITemplateSchema): string[] {
 class TemplateRegistry {
   private entries = new Map<string, ITemplateRegistryEntry>()
 
+  private _pushAudit(
+    entry: ITemplateRegistryEntry,
+    action: TemplateAuditAction,
+    options: { operator?: string; note?: string; detail?: string } = {}
+  ) {
+    entry.auditLogs = entry.auditLogs ?? []
+    entry.auditLogs.push({
+      action,
+      timestamp: Date.now(),
+      operator: options.operator ?? '系统',
+      note: options.note,
+      detail: options.detail
+    })
+  }
+
   register(
     schema: ITemplateSchema,
     category: string,
@@ -98,6 +187,8 @@ class TemplateRegistry {
     const wasPublished = prevStatus === 'published' || prevStatus === 'review'
     const newStatus: TemplatePublishStatus = builtIn ? 'published' : 'draft'
     const versionHistory: ITemplateVersionRecord[] = existing?.versionHistory ?? []
+    const auditLogs: ITemplateAuditRecord[] = existing?.auditLogs ?? []
+    const trialRuns: ITemplateTrialRunRecord[] = existing?.trialRuns ?? []
 
     if (options?.note && existing) {
       versionHistory.push({
@@ -114,15 +205,27 @@ class TemplateRegistry {
       })
     }
 
-    this.entries.set(schema.id, {
+    const nextEntry: ITemplateRegistryEntry = {
       schema,
       category,
       builtIn,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       status: newStatus,
-      versionHistory
+      versionHistory,
+      asset: createDefaultAssetMetadata(schema, category, {
+        ...(existing?.asset ?? {}),
+        ...(options?.asset ?? {})
+      }),
+      trialRuns,
+      auditLogs
+    }
+    this._pushAudit(nextEntry, existing ? 'save' : 'create', {
+      operator: options?.operator,
+      note: options?.note,
+      detail: builtIn ? '内置模板注册' : '模板保存'
     })
+    this.entries.set(schema.id, nextEntry)
     if (!builtIn) {
       this._persist()
     }
@@ -133,7 +236,60 @@ class TemplateRegistry {
   }
 
   getEntry(id: string): ITemplateRegistryEntry | undefined {
-    return this.entries.get(id)
+    const entry = this.entries.get(id)
+    return entry
+  }
+
+  updateAssetMetadata(
+    id: string,
+    asset: Partial<ITemplateAssetMetadata>,
+    operator?: string
+  ): ITemplateRegistryEntry | undefined {
+    const entry = this.entries.get(id)
+    if (!entry || entry.builtIn) return undefined
+    entry.asset = createDefaultAssetMetadata(entry.schema, entry.category, {
+      ...(entry.asset ?? {}),
+      ...asset
+    })
+    entry.updatedAt = Date.now()
+    this._pushAudit(entry, 'asset_update', {
+      operator,
+      detail: '更新模板资产信息'
+    })
+    this._persist()
+    return cloneEntry(entry)
+  }
+
+  addTrialRun(
+    id: string,
+    record: Omit<ITemplateTrialRunRecord, 'id' | 'timestamp'>,
+    operator?: string
+  ): ITemplateTrialRunRecord | undefined {
+    const entry = this.entries.get(id)
+    if (!entry) return undefined
+    const trialRun: ITemplateTrialRunRecord = {
+      ...record,
+      id: `trial_${Date.now()}`,
+      timestamp: Date.now()
+    }
+    entry.trialRuns = entry.trialRuns ?? []
+    entry.trialRuns.push(trialRun)
+    entry.updatedAt = Date.now()
+    this._pushAudit(entry, 'trial_run', {
+      operator,
+      note: trialRun.summary,
+      detail: `${trialRun.scenario} · ${trialRun.status === 'passed' ? '通过' : '失败'}`
+    })
+    if (!entry.builtIn) this._persist()
+    return trialRun
+  }
+
+  getAuditLogs(id: string): ITemplateAuditRecord[] {
+    return this.entries.get(id)?.auditLogs?.slice().reverse() ?? []
+  }
+
+  getTrialRuns(id: string): ITemplateTrialRunRecord[] {
+    return this.entries.get(id)?.trialRuns?.slice().reverse() ?? []
   }
 
   getAll(): ITemplateListItem[] {
@@ -168,39 +324,59 @@ class TemplateRegistry {
     return Array.from(new Set(Array.from(this.entries.values()).map(e => e.category)))
   }
 
-  submitForReview(id: string, note?: string): string[] {
+  submitForReview(id: string, note?: string | ITemplateReleaseNote): string[] {
     const entry = this.entries.get(id)
     if (!entry || entry.builtIn) return [`模板 "${id}" 不存在或为内置模板`]
     const errors = validateSchema(entry.schema)
     if (errors.length) return errors
     const now = Date.now()
+    const releaseNote = typeof note === 'string' ? { note } : note
     entry.versionHistory.push({
       status: 'review',
       version: entry.schema.version,
-      note,
+      note: releaseNote?.note,
+      releaseNote,
       timestamp: now
     })
     entry.status = 'review'
     entry.updatedAt = now
+    entry.asset = createDefaultAssetMetadata(entry.schema, entry.category, {
+      ...(entry.asset ?? {}),
+      lifecycleStatus: 'trial'
+    })
+    this._pushAudit(entry, 'submit_review', {
+      note: releaseNote?.note,
+      detail: releaseNote?.reason
+    })
     this._persist()
     return []
   }
 
-  publish(id: string, note?: string): string[] {
+  publish(id: string, note?: string | ITemplateReleaseNote): string[] {
     const entry = this.entries.get(id)
     if (!entry || entry.builtIn) return [`模板 "${id}" 不存在或为内置模板`]
     const errors = validateSchema(entry.schema)
     if (errors.length) return errors
     const now = Date.now()
+    const releaseNote = typeof note === 'string' ? { note } : note
     entry.versionHistory.push({
       status: 'published',
       version: entry.schema.version,
-      note,
+      note: releaseNote?.note,
+      releaseNote,
       schemaSnapshot: JSON.parse(JSON.stringify(entry.schema)) as ITemplateSchema,
       timestamp: now
     })
     entry.status = 'published'
     entry.updatedAt = now
+    entry.asset = createDefaultAssetMetadata(entry.schema, entry.category, {
+      ...(entry.asset ?? {}),
+      lifecycleStatus: 'online'
+    })
+    this._pushAudit(entry, 'publish', {
+      note: releaseNote?.note,
+      detail: releaseNote?.reason
+    })
     this._persist()
     return []
   }
@@ -216,6 +392,11 @@ class TemplateRegistry {
     })
     entry.status = 'archived'
     entry.updatedAt = now
+    entry.asset = createDefaultAssetMetadata(entry.schema, entry.category, {
+      ...(entry.asset ?? {}),
+      lifecycleStatus: 'suspended'
+    })
+    this._pushAudit(entry, 'withdraw', { detail: '撤回线上模板' })
     this._persist()
     return []
   }
@@ -255,6 +436,12 @@ class TemplateRegistry {
         }
       ]
     })
+    const nextEntry = this.entries.get(id)
+    if (nextEntry) {
+      this._pushAudit(nextEntry, 'rollback', {
+        note: `回滚到版本 ${snapshot.version}`
+      })
+    }
     this._persist()
     return snapshot
   }
@@ -296,7 +483,12 @@ class TemplateRegistry {
       for (const entry of stored) {
         const existing = this.entries.get(entry.schema.id)
         if (!existing || existing.builtIn || existing.updatedAt <= entry.updatedAt) {
-          this.entries.set(entry.schema.id, entry)
+          this.entries.set(entry.schema.id, {
+            ...entry,
+            asset: createDefaultAssetMetadata(entry.schema, entry.category, entry.asset),
+            trialRuns: entry.trialRuns ?? [],
+            auditLogs: entry.auditLogs ?? []
+          })
         }
       }
     } catch {

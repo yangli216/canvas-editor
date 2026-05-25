@@ -1,13 +1,24 @@
 import { EDITOR_COMPONENT, EditorComponent } from '../../editor'
 import {
   templateRegistry,
+  type ITemplateAssetMetadata,
+  type ITemplateReleaseNote,
+  type ITemplateTrialRunRecord,
   type TemplatePublishStatus
 } from '../../editor/template/TemplateRegistry'
+import {
+  TemplateDocumentStore,
+  type ITemplateDocumentRecord
+} from '../../editor/template/TemplateDocumentStore'
 import type { ITemplateBlock, ITemplateSchema } from '../../editor/template/index'
 import {
   getResolvedTemplateBlocks,
   validateSchema
 } from '../../editor/template/index'
+import {
+  buildTemplateAdmissionReport,
+  type ITemplateAdmissionReport
+} from '../../editor/template/TemplateGovernance'
 import {
   TEMPLATE_PAGE_DECORATION_VARIABLES,
   getTemplatePageDecorationPreset,
@@ -31,12 +42,14 @@ import { TemplateFeedback } from './TemplateFeedback'
 import { TemplatePreviewDialog } from './TemplatePreviewDialog'
 
 export interface ITemplateManagerOptions {
-  onApply: (schema: ITemplateSchema) => void
+  onApply: (schema: ITemplateSchema, record?: ITemplateDocumentRecord) => void
+  documentStore?: TemplateDocumentStore
 }
 
 type TemplateStatusFilter = TemplatePublishStatus | 'all' | 'problem'
 type TemplateViewMode = 'card' | 'list'
 type TemplateSortMode = 'updatedDesc' | 'updatedAsc' | 'nameAsc'
+type TemplateOperationView = 'all' | 'mine' | 'recent' | 'risk' | 'todo'
 
 interface ITemplateWorkbenchItem extends ITemplateListItem {
   entry: ITemplateRegistryEntry
@@ -46,6 +59,7 @@ interface ITemplateWorkbenchItem extends ITemplateListItem {
   businessFieldCount: number
   dataSourceCount: number
   issueCount: number
+  admissionReport: ITemplateAdmissionReport
 }
 
 function normalizePageDecorationConfig(
@@ -305,21 +319,39 @@ export class TemplateManager {
   private mask: HTMLDivElement
   private container: HTMLDivElement
   private options: ITemplateManagerOptions
+  private previousBodyOverflow = ''
+  private previousHtmlOverflow = ''
   private activeCategory = '全部'
   private statusFilter: TemplateStatusFilter = 'all'
   private viewMode: TemplateViewMode = 'card'
   private sortMode: TemplateSortMode = 'updatedDesc'
+  private operationView: TemplateOperationView = 'all'
   private searchKeyword = ''
   private sidebarEl!: HTMLDivElement
   private statsEl!: HTMLDivElement
   private bodyEl!: HTMLDivElement
+  private documentStore: TemplateDocumentStore
 
   constructor(options: ITemplateManagerOptions) {
     this.options = options
+    this.documentStore = options.documentStore ?? new TemplateDocumentStore()
     templateRegistry.loadFromStorage()
+    this._lockRootScroll()
     const { mask, container } = this._render()
     this.mask = mask
     this.container = container
+  }
+
+  private _lockRootScroll() {
+    this.previousBodyOverflow = document.body.style.overflow
+    this.previousHtmlOverflow = document.documentElement.style.overflow
+    document.body.style.overflow = 'hidden'
+    document.documentElement.style.overflow = 'hidden'
+  }
+
+  private _unlockRootScroll() {
+    document.body.style.overflow = this.previousBodyOverflow
+    document.documentElement.style.overflow = this.previousHtmlOverflow
   }
 
   private _render() {
@@ -530,8 +562,53 @@ export class TemplateManager {
             this._refreshWorkbench()
           }
         }))
+      ),
+      this._createSidebarSection(
+        '运营视图',
+        [
+          { value: 'all', label: '全部模板', count: allItems.length },
+          {
+            value: 'mine',
+            label: '我负责的',
+            count: allItems.filter(item => this._matchesOperationView(item, 'mine')).length
+          },
+          {
+            value: 'recent',
+            label: '最近使用',
+            count: allItems.filter(item => this._matchesOperationView(item, 'recent')).length
+          },
+          {
+            value: 'risk',
+            label: '有风险',
+            count: allItems.filter(item => this._matchesOperationView(item, 'risk')).length
+          },
+          {
+            value: 'todo',
+            label: '待我处理',
+            count: allItems.filter(item => this._matchesOperationView(item, 'todo')).length
+          }
+        ].map(item => ({
+          label: item.label,
+          count: item.count,
+          active: this.operationView === item.value,
+          onClick: () => {
+            this.operationView = item.value as TemplateOperationView
+            this._refreshWorkbench()
+          }
+        }))
       )
     )
+  }
+
+  private _matchesOperationView(
+    item: ITemplateWorkbenchItem,
+    view: TemplateOperationView = this.operationView
+  ): boolean {
+    if (view === 'all') return true
+    if (view === 'mine') return (item.entry.asset?.owner ?? '模板管理员') === '模板管理员'
+    if (view === 'recent') return Date.now() - item.updatedAt <= 1000 * 60 * 60 * 24 * 30
+    if (view === 'risk') return item.admissionReport.status !== 'passed'
+    return item.entry.status !== 'published' || item.admissionReport.status === 'blocked'
   }
 
   private _createSidebarSection(
@@ -585,8 +662,8 @@ export class TemplateManager {
         tone: 'warning'
       },
       {
-        label: '需修正',
-        value: allItems.filter(item => item.issueCount > 0).length,
+        label: '准入阻断',
+        value: allItems.filter(item => item.admissionReport.status === 'blocked').length,
         tone: 'danger'
       }
     ]
@@ -621,6 +698,7 @@ export class TemplateManager {
   }
 
   private _getWorkbenchItems(applyFilter = true): ITemplateWorkbenchItem[] {
+    const documents = this.documentStore.list()
     let items = templateRegistry.getAll()
       .map(item => {
         const entry = templateRegistry.getEntry(item.id)
@@ -628,7 +706,8 @@ export class TemplateManager {
         return {
           ...item,
           entry,
-          ...getTemplateMetrics(entry.schema)
+          ...getTemplateMetrics(entry.schema),
+          admissionReport: buildTemplateAdmissionReport(entry, { documents })
         }
       })
       .filter(Boolean) as ITemplateWorkbenchItem[]
@@ -643,8 +722,18 @@ export class TemplateManager {
         } else if (this.statusFilter !== 'all' && item.entry.status !== this.statusFilter) {
           return false
         }
+        if (!this._matchesOperationView(item)) return false
         if (this.searchKeyword) {
-          const haystack = [item.name, item.description, item.category]
+          const asset = item.entry.asset ?? {}
+          const haystack = [
+            item.name,
+            item.description,
+            item.category,
+            asset.department,
+            asset.documentType,
+            asset.owner,
+            asset.scenario
+          ]
             .filter(Boolean)
             .join(' ')
             .toLowerCase()
@@ -664,6 +753,8 @@ export class TemplateManager {
   private _renderCard(item: ITemplateWorkbenchItem): HTMLDivElement {
     const card = document.createElement('div')
     card.className = `tm-card tm-card--${this.viewMode} tm-card--${item.entry.status}`
+    const asset = item.entry.asset ?? {}
+    const admission = item.admissionReport
 
     const top = document.createElement('div')
     top.className = 'tm-card__top'
@@ -682,8 +773,12 @@ export class TemplateManager {
     nameWrap.append(name, desc)
 
     const status = document.createElement('span')
-    status.className = `tm-card__status tm-card__status--${item.issueCount ? 'archived' : 'published'}`
-    status.textContent = item.issueCount ? '需修正' : '可发布'
+    status.className = `tm-card__status tm-card__status--${admission.status === 'passed' ? 'published' : 'archived'}`
+    status.textContent = admission.status === 'blocked'
+      ? '准入阻断'
+      : admission.status === 'warning'
+        ? '待确认'
+        : '可发布'
     top.append(nameWrap, status)
 
     const meta = document.createElement('div')
@@ -691,9 +786,12 @@ export class TemplateManager {
     const metaItems = [
       STATUS_LABEL[item.entry.status],
       `v${item.entry.schema.version}`,
-      `${item.category}${item.builtIn ? ' · 内置' : ''}`
+      `${item.category}${item.builtIn ? ' · 内置' : ''}`,
+      asset.department,
+      asset.documentType,
+      asset.owner ? `负责人 ${asset.owner}` : undefined
     ]
-    metaItems.forEach(text => {
+    metaItems.filter((text): text is string => Boolean(text)).forEach(text => {
       const tag = document.createElement('span')
       tag.textContent = text
       meta.append(tag)
@@ -704,7 +802,7 @@ export class TemplateManager {
     ;([
       { label: '结构块', value: item.blockCount },
       { label: '字段', value: item.fieldCount },
-      { label: '规则', value: item.ruleCount }
+      { label: '准入项', value: admission.issueCount }
     ]).forEach(metric => {
       const cell = document.createElement('div')
       cell.className = 'tm-card__metric'
@@ -714,6 +812,18 @@ export class TemplateManager {
       label.textContent = metric.label
       cell.append(value, label)
       metrics.append(cell)
+    })
+
+    const ops = document.createElement('div')
+    ops.className = 'tm-card__ops'
+    ;([
+      `数据覆盖 ${admission.dataBindingCoverage}%`,
+      `试运行 ${admission.latestTrialRun ? (admission.latestTrialRun.status === 'passed' ? '通过' : '失败') : '未验证'}`,
+      `病历引用 ${admission.clinicalImpact.boundDocumentCount}`
+    ]).forEach(text => {
+      const chip = document.createElement('span')
+      chip.textContent = text
+      ops.append(chip)
     })
 
     const footer = document.createElement('div')
@@ -733,7 +843,7 @@ export class TemplateManager {
     )
 
     footer.append(updated, actionsEl)
-    card.append(top, meta, metrics, footer)
+    card.append(top, meta, metrics, ops, footer)
     return card
   }
 
@@ -745,7 +855,19 @@ export class TemplateManager {
     btn.addEventListener('click', e => {
       e.stopPropagation()
       if (item.entry.status === 'published') {
-        this.options.onApply(item.entry.schema)
+        const record = this.documentStore.create({
+          schema: item.entry.schema,
+          templateStatus: item.entry.status,
+          title: item.entry.schema.name,
+          flatValues: {},
+          trace: {
+            operator: '模板管理员',
+            source: 'templateManager',
+            summary: `从模板中心使用 ${item.entry.schema.name} v${item.entry.schema.version}`
+          }
+        })
+        this.options.onApply(item.entry.schema, record)
+        TemplateFeedback.toast('已创建绑定当前模板版本快照的病历实例', 'success')
         this._dispose()
         return
       }
@@ -770,7 +892,7 @@ export class TemplateManager {
   private _createDecorationAction(item: ITemplateWorkbenchItem): HTMLButtonElement {
     const btn = document.createElement('button')
     btn.className = 'tm-card__btn'
-    btn.textContent = '头尾方案'
+    btn.textContent = '页眉页脚'
     btn.type = 'button'
     btn.addEventListener('click', e => {
       e.stopPropagation()
@@ -796,9 +918,14 @@ export class TemplateManager {
     const menu = document.createElement('div')
     menu.className = 'tm-more-menu'
     const actions = [
-      { label: '套用页眉页脚', handler: () => this._openPageDecorationDialog(item) },
+      { label: '资产信息', handler: () => this._openAssetDialog(item) },
+      { label: '准入报告', handler: () => this._openAdmissionReport(item) },
+      { label: '试运行验证', handler: () => this._openTrialRun(item) },
+      { label: '影响范围', handler: () => this._openClinicalImpact(item) },
+      { label: '引用病历追溯', handler: () => this._openDocumentTrace(item) },
       { label: '版本管理', handler: () => this._openVersionCenter(item) },
       { label: '发版流程', handler: () => this._openReleaseFlow(item) },
+      { label: '操作日志', handler: () => this._openAuditLog(item) },
       { label: '删除', danger: true, handler: () => this._deleteTemplate(item) }
     ]
     actions.forEach(action => {
@@ -824,6 +951,343 @@ export class TemplateManager {
       }
     }
     window.setTimeout(() => document.addEventListener('mousedown', close), 0)
+  }
+
+  private _createTextInput(value = '', placeholder = ''): HTMLInputElement {
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.className = 'td-props__input tm-governance-form__input'
+    input.value = value
+    input.placeholder = placeholder
+    return input
+  }
+
+  private _createGovernanceRow(label: string, control: HTMLElement): HTMLDivElement {
+    const row = document.createElement('div')
+    row.className = 'tm-governance-form__row'
+    const title = document.createElement('label')
+    title.textContent = label
+    row.append(title, control)
+    return row
+  }
+
+  private _renderAdmissionReport(report: ITemplateAdmissionReport): HTMLDivElement {
+    const content = document.createElement('div')
+    content.className = 'tm-admission-report'
+    const summary = document.createElement('div')
+    summary.className = 'tm-version-center__summary'
+    summary.innerHTML = `
+      <div><span>准入状态</span><strong>${report.status === 'passed' ? '通过' : report.status === 'blocked' ? '阻断' : '待确认'}</strong></div>
+      <div><span>阻断项</span><strong>${report.blockerCount}</strong></div>
+      <div><span>数据覆盖</span><strong>${report.dataBindingCoverage}%</strong></div>
+      <div><span>病历引用</span><strong>${report.clinicalImpact.boundDocumentCount}</strong></div>
+    `
+    content.append(summary)
+
+    const list = document.createElement('div')
+    list.className = 'tm-admission-report__list'
+    if (!report.issues.length) {
+      const empty = document.createElement('div')
+      empty.className = 'tm-empty'
+      empty.textContent = '当前模板已通过发布准入检查'
+      list.append(empty)
+    }
+    report.issues.forEach(issue => {
+      const row = document.createElement('div')
+      row.className = `tm-admission-report__item tm-admission-report__item--${issue.level}`
+      const badge = document.createElement('span')
+      badge.textContent = issue.level === 'blocker'
+        ? '阻断'
+        : issue.level === 'warning'
+          ? '警告'
+          : '提示'
+      const message = document.createElement('strong')
+      message.textContent = issue.message
+      const category = document.createElement('small')
+      category.textContent = issue.category
+      row.append(badge, message, category)
+      list.append(row)
+    })
+    content.append(list)
+    return content
+  }
+
+  private _openAdmissionReport(item: ITemplateWorkbenchItem) {
+    TemplateFeedback.openDialog({
+      title: `${item.name} · 发布准入报告`,
+      content: this._renderAdmissionReport(item.admissionReport),
+      width: 760,
+      actions: [
+        {
+          label: '进入设计器修复',
+          onClick: () => this._openDesigner(item.entry)
+        },
+        { label: '关闭', variant: 'primary' }
+      ]
+    })
+  }
+
+  private _openAssetDialog(item: ITemplateWorkbenchItem) {
+    if (item.builtIn) {
+      TemplateFeedback.toast('内置模板资产信息不可直接编辑，可复制为草稿后维护', 'info')
+      return
+    }
+    const asset = item.entry.asset ?? {}
+    const content = document.createElement('div')
+    content.className = 'tm-governance-form'
+    const hospitalArea = this._createTextInput(asset.hospitalArea, '默认院区')
+    const department = this._createTextInput(asset.department, '所属科室')
+    const documentType = this._createTextInput(asset.documentType, '文书类型')
+    const owner = this._createTextInput(asset.owner, '负责人')
+    const roles = this._createTextInput((asset.applicableRoles ?? []).join('、'), '医生、护士')
+    const scenario = this._createTextInput(asset.scenario, '适用场景')
+    content.append(
+      this._createGovernanceRow('院区', hospitalArea),
+      this._createGovernanceRow('科室', department),
+      this._createGovernanceRow('文书类型', documentType),
+      this._createGovernanceRow('负责人', owner),
+      this._createGovernanceRow('适用角色', roles),
+      this._createGovernanceRow('适用场景', scenario)
+    )
+
+    TemplateFeedback.openDialog({
+      title: `${item.name} · 资产信息`,
+      content,
+      width: 560,
+      actions: [
+        {
+          label: '保存资产信息',
+          variant: 'primary',
+          onClick: () => {
+            const nextAsset: Partial<ITemplateAssetMetadata> = {
+              hospitalArea: hospitalArea.value.trim(),
+              department: department.value.trim(),
+              documentType: documentType.value.trim(),
+              owner: owner.value.trim(),
+              applicableRoles: roles.value.split(/[、,，]/).map(role => role.trim()).filter(Boolean),
+              scenario: scenario.value.trim()
+            }
+            templateRegistry.updateAssetMetadata(item.id, nextAsset, '模板管理员')
+            this._refreshWorkbench()
+            TemplateFeedback.toast('资产信息已保存', 'success')
+          }
+        }
+      ]
+    })
+  }
+
+  private _openTrialRun(item: ITemplateWorkbenchItem) {
+    const content = document.createElement('div')
+    content.className = 'tm-governance-form'
+    const scenario = document.createElement('select')
+    scenario.className = 'tm-select tm-governance-form__input'
+    ;['住院入院记录', '门诊病历', '手术记录', '护理记录', '知情同意'].forEach(label => {
+      const option = document.createElement('option')
+      option.value = label
+      option.textContent = label
+      scenario.append(option)
+    })
+    const patientId = this._createTextInput('P-1001', '测试患者 ID')
+    const department = this._createTextInput(item.entry.asset?.department, '测试科室')
+    const status = document.createElement('select')
+    status.className = 'tm-select tm-governance-form__input'
+    ;([
+      { label: '通过', value: 'passed' },
+      { label: '失败', value: 'failed' }
+    ]).forEach(item => {
+      const option = document.createElement('option')
+      option.value = item.value
+      option.textContent = item.label
+      status.append(option)
+    })
+    const summary = document.createElement('textarea')
+    summary.className = 'tm-release-flow__note'
+    summary.placeholder = '记录本次试运行的输入、规则触发、导出结果或待修复问题'
+    content.append(
+      this._createGovernanceRow('测试场景', scenario),
+      this._createGovernanceRow('测试患者', patientId),
+      this._createGovernanceRow('测试科室', department),
+      this._createGovernanceRow('验证结果', status),
+      this._createGovernanceRow('验证说明', summary)
+    )
+
+    const history = document.createElement('div')
+    history.className = 'tm-trial-history'
+    this._renderTrialRuns(templateRegistry.getTrialRuns(item.id)).forEach(row => history.append(row))
+    content.append(history)
+
+    TemplateFeedback.openDialog({
+      title: `${item.name} · 试运行验证`,
+      content,
+      width: 640,
+      actions: [
+        {
+          label: '打开预览',
+          closeOnClick: false,
+          onClick: () => new TemplatePreviewDialog(item.entry.schema)
+        },
+        {
+          label: '保存验证结果',
+          variant: 'primary',
+          onClick: () => {
+            templateRegistry.addTrialRun(item.id, {
+              scenario: scenario.value,
+              patientId: patientId.value.trim(),
+              department: department.value.trim(),
+              status: status.value as ITemplateTrialRunRecord['status'],
+              summary: summary.value.trim() || '试运行验证已完成'
+            }, '模板管理员')
+            this._refreshWorkbench()
+            TemplateFeedback.toast('试运行结果已保存', 'success')
+          }
+        }
+      ]
+    })
+  }
+
+  private _renderTrialRuns(records: ITemplateTrialRunRecord[]): HTMLDivElement[] {
+    if (!records.length) {
+      const empty = document.createElement('div')
+      empty.className = 'tm-empty'
+      empty.textContent = '暂无试运行记录'
+      return [empty]
+    }
+    return records.slice(0, 4).map(record => {
+      const row = document.createElement('div')
+      row.className = 'tm-version-center__record'
+      const status = document.createElement('span')
+      status.textContent = record.status === 'passed' ? '通过' : '失败'
+      const scenario = document.createElement('strong')
+      scenario.textContent = record.scenario
+      const note = document.createElement('em')
+      note.textContent = record.summary || '无验证说明'
+      const time = document.createElement('small')
+      time.textContent = formatTime(record.timestamp)
+      row.append(status, scenario, note, time)
+      return row
+    })
+  }
+
+  private _openClinicalImpact(item: ITemplateWorkbenchItem) {
+    const documents = this.documentStore.list().filter(record => record.template.id === item.id)
+    const content = document.createElement('div')
+    content.className = 'tm-version-center'
+    const summary = document.createElement('div')
+    summary.className = 'tm-version-center__summary'
+    summary.innerHTML = `
+      <div><span>引用病历</span><strong>${documents.length}</strong></div>
+      <div><span>当前版本</span><strong>${item.admissionReport.clinicalImpact.currentVersionDocumentCount}</strong></div>
+      <div><span>历史版本</span><strong>${item.admissionReport.clinicalImpact.outdatedVersionDocumentCount}</strong></div>
+    `
+    content.append(summary)
+    if (!documents.length) {
+      const empty = document.createElement('div')
+      empty.className = 'tm-empty'
+      empty.textContent = '当前还没有病历实例引用该模板'
+      content.append(empty)
+    }
+    documents.slice(0, 6).forEach(record => {
+      const row = document.createElement('div')
+      row.className = 'tm-version-center__record'
+      const status = document.createElement('span')
+      status.textContent = record.status
+      const title = document.createElement('strong')
+      title.textContent = record.title || record.id
+      const version = document.createElement('em')
+      version.textContent = `模板 v${record.template.version}`
+      const time = document.createElement('small')
+      time.textContent = formatTime(record.updatedAt)
+      row.append(status, title, version, time)
+      content.append(row)
+    })
+    TemplateFeedback.openDialog({
+      title: `${item.name} · 临床影响范围`,
+      content,
+      width: 640,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private _openDocumentTrace(item: ITemplateWorkbenchItem) {
+    const documents = this.documentStore.list().filter(record => record.template.id === item.id)
+    const content = document.createElement('div')
+    content.className = 'tm-version-center'
+    const summary = document.createElement('div')
+    summary.className = 'tm-version-center__summary'
+    const traceCount = documents.reduce((sum, record) => sum + record.traceEvents.length, 0)
+    summary.innerHTML = `
+      <div><span>病历实例</span><strong>${documents.length}</strong></div>
+      <div><span>引用追溯</span><strong>${traceCount}</strong></div>
+      <div><span>最近更新</span><strong>${documents[0] ? formatTime(documents[0].updatedAt) : '暂无'}</strong></div>
+    `
+    content.append(summary)
+    if (!documents.length) {
+      const empty = document.createElement('div')
+      empty.className = 'tm-empty'
+      empty.textContent = '当前模板暂无引用病历，使用已发布模板后会自动生成实例追溯信息。'
+      content.append(empty)
+    }
+    documents.slice(0, 4).forEach(record => {
+      const group = document.createElement('div')
+      group.className = 'tm-trace-group'
+      const title = document.createElement('div')
+      title.className = 'tm-trace-group__title'
+      title.textContent = `${record.title || record.id} · v${record.template.version}`
+      group.append(title)
+      this.documentStore.getTraceTimeline(record.id).slice(0, 6).forEach(event => {
+        const row = document.createElement('div')
+        row.className = 'tm-version-center__record'
+        const action = document.createElement('span')
+        action.textContent = event.title
+        const operator = document.createElement('strong')
+        operator.textContent = event.operator || '系统'
+        const summary = document.createElement('em')
+        summary.textContent = event.summary || `${event.changedFields?.length ?? 0} 个字段变更`
+        const time = document.createElement('small')
+        time.textContent = formatTime(event.timestamp)
+        row.append(action, operator, summary, time)
+        group.append(row)
+      })
+      content.append(group)
+    })
+    TemplateFeedback.openDialog({
+      title: `${item.name} · 引用病历追溯`,
+      content,
+      width: 720,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private _openAuditLog(item: ITemplateWorkbenchItem) {
+    const content = document.createElement('div')
+    content.className = 'tm-version-center'
+    const records = templateRegistry.getAuditLogs(item.id)
+    if (!records.length) {
+      const empty = document.createElement('div')
+      empty.className = 'tm-empty'
+      empty.textContent = '暂无操作日志'
+      content.append(empty)
+    }
+    records.slice(0, 10).forEach(record => {
+      const row = document.createElement('div')
+      row.className = 'tm-version-center__record'
+      const action = document.createElement('span')
+      action.textContent = record.action
+      const operator = document.createElement('strong')
+      operator.textContent = record.operator || '系统'
+      const detail = document.createElement('em')
+      detail.textContent = record.note || record.detail || '无说明'
+      const time = document.createElement('small')
+      time.textContent = formatTime(record.timestamp)
+      row.append(action, operator, detail, time)
+      content.append(row)
+    })
+    TemplateFeedback.openDialog({
+      title: `${item.name} · 操作日志`,
+      content,
+      width: 680,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
   }
 
   private _openVersionCenter(item: ITemplateWorkbenchItem) {
@@ -882,15 +1346,30 @@ export class TemplateManager {
     }
     const content = document.createElement('div')
     content.className = 'tm-release-flow'
+    content.append(this._renderAdmissionReport(item.admissionReport))
+
+    const reason = this._createTextInput('', '例如：护理记录结构调整')
+    const impactScope = this._createTextInput('', '例如：心内科住院病历')
+    const verifier = this._createTextInput('', '验证人')
+    const plannedAt = this._createTextInput('', '计划上线时间')
     const note = document.createElement('textarea')
     note.className = 'tm-release-flow__note'
     note.placeholder = '填写本次送审、发布或撤回说明'
     const check = document.createElement('div')
-    check.className = `tm-release-flow__check${item.issueCount ? ' tm-release-flow__check--warn' : ''}`
-    check.textContent = item.issueCount
-      ? `发布检查发现 ${item.issueCount} 个配置问题，送审/发布会被拦截`
-      : '发布检查通过，可进入送审或发布'
-    content.append(check, note)
+    check.className = `tm-release-flow__check${item.admissionReport.status !== 'passed' ? ' tm-release-flow__check--warn' : ''}`
+    check.textContent = item.admissionReport.blockerCount
+      ? `发布准入存在 ${item.admissionReport.blockerCount} 个阻断项，送审/发布会被拦截`
+      : item.admissionReport.warningCount
+        ? `发布准入存在 ${item.admissionReport.warningCount} 个警告项，请确认后继续`
+        : '发布准入通过，可进入送审或发布'
+    content.append(
+      check,
+      this._createGovernanceRow('变更原因', reason),
+      this._createGovernanceRow('影响范围', impactScope),
+      this._createGovernanceRow('验证人', verifier),
+      this._createGovernanceRow('计划上线', plannedAt),
+      this._createGovernanceRow('版本说明', note)
+    )
 
     TemplateFeedback.openDialog({
       title: `${item.name} · 发版流程`,
@@ -899,17 +1378,35 @@ export class TemplateManager {
       actions: [
         {
           label: '送审',
-          onClick: () => this._runReleaseAction('review', item, note.value)
+          onClick: () => this._runReleaseAction('review', item, {
+            note: note.value.trim(),
+            reason: reason.value.trim(),
+            impactScope: impactScope.value.trim(),
+            verifier: verifier.value.trim(),
+            plannedAt: plannedAt.value.trim()
+          })
         },
         {
           label: '发布',
           variant: 'primary',
-          onClick: () => this._runReleaseAction('published', item, note.value)
+          onClick: () => this._runReleaseAction('published', item, {
+            note: note.value.trim(),
+            reason: reason.value.trim(),
+            impactScope: impactScope.value.trim(),
+            verifier: verifier.value.trim(),
+            plannedAt: plannedAt.value.trim()
+          })
         },
         {
           label: '撤回',
           variant: 'danger',
-          onClick: () => this._runReleaseAction('archived', item, note.value)
+          onClick: () => this._runReleaseAction('archived', item, {
+            note: note.value.trim(),
+            reason: reason.value.trim(),
+            impactScope: impactScope.value.trim(),
+            verifier: verifier.value.trim(),
+            plannedAt: plannedAt.value.trim()
+          })
         }
       ]
     })
@@ -918,12 +1415,23 @@ export class TemplateManager {
   private _runReleaseAction(
     status: Extract<TemplatePublishStatus, 'review' | 'published' | 'archived'>,
     item: ITemplateWorkbenchItem,
-    note: string
+    releaseNote: ITemplateReleaseNote
   ) {
+    if (status !== 'archived' && item.admissionReport.blockerCount > 0) {
+      TemplateFeedback.alert({
+        title: '发布准入未通过',
+        message: item.admissionReport.issues
+          .filter(issue => issue.level === 'blocker')
+          .map(issue => issue.message)
+          .join('；'),
+        tone: 'warning'
+      })
+      return
+    }
     const errors = status === 'review'
-      ? templateRegistry.submitForReview(item.id, note.trim() || undefined)
+      ? templateRegistry.submitForReview(item.id, releaseNote)
       : status === 'published'
-        ? templateRegistry.publish(item.id, note.trim() || undefined)
+        ? templateRegistry.publish(item.id, releaseNote)
         : templateRegistry.withdraw(item.id)
     if (errors.length) {
       TemplateFeedback.alert({
@@ -938,9 +1446,14 @@ export class TemplateManager {
   }
 
   private async _deleteTemplate(item: ITemplateWorkbenchItem) {
+    const boundDocumentCount = this.documentStore.list()
+      .filter(record => record.template.id === item.id)
+      .length
     const confirmed = await TemplateFeedback.confirm({
       title: '删除模板',
-      message: `确认删除模板“${item.name}”？该操作不可恢复。`,
+      message: boundDocumentCount
+        ? `确认删除模板“${item.name}”？当前已有 ${boundDocumentCount} 份病历引用该模板版本，删除后不影响历史快照回显，但模板资产不可恢复。`
+        : `确认删除模板“${item.name}”？该操作不可恢复。`,
       tone: 'danger',
       confirmText: '删除'
     })
@@ -1003,14 +1516,21 @@ export class TemplateManager {
   }
 
   private _openBusinessFieldCenter() {
+    const items = this._getWorkbenchItems(false)
+    const totalFields = items.reduce((sum, item) => sum + item.fieldCount, 0)
+    const totalBusinessFields = items.reduce((sum, item) => sum + item.businessFieldCount, 0)
+    const averageCoverage = items.length
+      ? Math.round(items.reduce((sum, item) => sum + item.admissionReport.dataBindingCoverage, 0) / items.length)
+      : 100
     const content = document.createElement('div')
     content.className = 'tm-version-center'
     const summary = document.createElement('div')
     summary.className = 'tm-version-center__summary'
     summary.innerHTML = `
       <div><span>适配器</span><strong>${templateDataAdapterRegistry.list().length}</strong></div>
-      <div><span>业务字段</span><strong>${this._getWorkbenchItems(false).reduce((sum, item) => sum + item.businessFieldCount, 0)}</strong></div>
-      <div><span>数据源</span><strong>${this._getWorkbenchItems(false).reduce((sum, item) => sum + item.dataSourceCount, 0)}</strong></div>
+      <div><span>业务字段</span><strong>${totalBusinessFields}/${totalFields}</strong></div>
+      <div><span>平均覆盖</span><strong>${averageCoverage}%</strong></div>
+      <div><span>数据源</span><strong>${items.reduce((sum, item) => sum + item.dataSourceCount, 0)}</strong></div>
     `
     content.append(summary)
     templateDataAdapterRegistry.list().forEach(adapter => {
@@ -1025,6 +1545,24 @@ export class TemplateManager {
       item.append(name, sources)
       content.append(item)
     })
+    const riskList = document.createElement('div')
+    riskList.className = 'tm-admission-report__list'
+    items
+      .filter(item => item.admissionReport.issues.some(issue => issue.category === 'dataBinding'))
+      .slice(0, 8)
+      .forEach(item => {
+        const row = document.createElement('div')
+        row.className = 'tm-admission-report__item tm-admission-report__item--warning'
+        const badge = document.createElement('span')
+        badge.textContent = `${item.admissionReport.dataBindingCoverage}%`
+        const name = document.createElement('strong')
+        name.textContent = item.name
+        const detail = document.createElement('small')
+        detail.textContent = `${item.admissionReport.issues.filter(issue => issue.category === 'dataBinding').length} 个绑定问题`
+        row.append(badge, name, detail)
+        riskList.append(row)
+      })
+    if (riskList.childElementCount) content.append(riskList)
     TemplateFeedback.openDialog({
       title: '业务字段中心',
       content,
@@ -1096,7 +1634,7 @@ export class TemplateManager {
       const hint = document.createElement('div')
       hint.className = 'tm-decoration-form__hint'
       hint.textContent = item.builtIn
-        ? '内置模板套用头尾方案后会生成当前模板的可编辑草稿。'
+        ? '内置模板套用页眉页脚方案后会生成当前模板的可编辑草稿。'
         : '可直接为当前模板切换或追加页眉页脚方案，无需进入字段级属性面板。'
       content.append(hint)
 
@@ -1277,7 +1815,7 @@ export class TemplateManager {
             this._refreshWorkbench()
             TemplateFeedback.toast(
               item.builtIn
-                ? '已生成包含头尾方案的可编辑草稿'
+                ? '已生成包含页眉页脚方案的可编辑草稿'
                 : '页眉页脚方案已保存',
               'success'
             )
@@ -1364,5 +1902,6 @@ export class TemplateManager {
     document.querySelectorAll('.tm-more-menu').forEach(el => el.remove())
     this.mask.remove()
     this.container.remove()
+    this._unlockRootScroll()
   }
 }

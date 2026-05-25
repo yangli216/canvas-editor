@@ -450,4 +450,151 @@ describe('template document store', () => {
     expect(migrated?.document?.template.version).toBe('1.1.0')
     expect(store.get(archived.id)?.template.version).toBe('1.0.0')
   })
+
+  it('会为创建、暂存、状态变更、迁移和手工记录生成病历留痕时间线', () => {
+    const store = new TemplateDocumentStore(storageKey, storage)
+    const record = store.create({
+      schema: createLegacySchema(),
+      flatValues: {
+        patientName: '张三',
+        diagnosis: '肺部感染'
+      },
+      trace: {
+        operator: '王医生',
+        source: 'templateManager'
+      }
+    })
+
+    store.autosave(record.id, {
+      flatValues: {
+        patientName: '张三',
+        diagnosis: '肺炎'
+      },
+      trace: {
+        operator: '王医生'
+      }
+    })
+    store.setStatus(record.id, 'signed', {
+      operator: '李主任',
+      summary: '完成上级医师签名'
+    })
+    store.appendTrace(record.id, {
+      action: 'manual',
+      operator: '质控员',
+      title: '质控复核',
+      summary: '诊断描述符合规范'
+    })
+    store.migrate(record.id, createNextSchema(), {
+      allowPartial: true,
+      note: '升级到 1.1.0',
+      trace: {
+        operator: '模板管理员'
+      }
+    })
+
+    const timeline = store.getTraceTimeline(record.id)
+    expect(timeline.map(item => item.action)).toEqual([
+      'migrate',
+      'manual',
+      'status_change',
+      'autosave',
+      'create'
+    ])
+    expect(timeline.find(item => item.action === 'autosave')?.changedFields).toEqual([
+      {
+        fieldId: 'diagnosis',
+        before: '肺部感染',
+        after: '肺炎'
+      }
+    ])
+    expect(timeline.find(item => item.action === 'status_change')).toMatchObject({
+      operator: '李主任',
+      statusBefore: 'draft',
+      statusAfter: 'signed'
+    })
+    expect(store.exportPersistenceRecord(record.id)?.traceEvents?.length).toBe(5)
+  })
+
+  it('提供面向医生书写病历的留痕 API、字段修订轨迹和书写摘要', () => {
+    const store = new TemplateDocumentStore(storageKey, storage)
+    const record = store.create({
+      schema: createLegacySchema(),
+      patientId: 'p-001',
+      encounterId: 'enc-001',
+      flatValues: {
+        patientName: '张三',
+        diagnosis: '肺部感染'
+      }
+    })
+
+    store.startWriting(record.id, {
+      operator: '王医生',
+      role: '住院医师',
+      department: '呼吸内科'
+    })
+    const written = store.write(record.id, {
+      operator: '王医生',
+      role: '住院医师',
+      department: '呼吸内科',
+      flatValues: {
+        diagnosis: '社区获得性肺炎'
+      },
+      editorState: {
+        cursor: 'field:diagnosis'
+      }
+    })
+    store.write(record.id, {
+      operator: '王医生',
+      role: '住院医师',
+      commit: true,
+      flatValues: {
+        legacyRemark: '已完成首次病程记录补充'
+      }
+    })
+    store.reviewWriting(record.id, {
+      operator: '李主任',
+      role: '上级医师',
+      summary: '上级医师已复核诊断与病程描述'
+    })
+    store.signDocument(record.id, {
+      operator: '王医生',
+      role: '住院医师'
+    })
+
+    expect(written?.content.flatValues).toMatchObject({
+      patientName: '张三',
+      diagnosis: '社区获得性肺炎'
+    })
+    expect(store.get(record.id)?.status).toBe('signed')
+
+    const diagnosisTimeline = store.getFieldTraceTimeline(record.id, 'diagnosis')
+    expect(diagnosisTimeline).toHaveLength(1)
+    expect(diagnosisTimeline[0]).toMatchObject({
+      action: 'writing_update',
+      operator: '王医生',
+      changedFields: [
+        {
+          fieldId: 'diagnosis',
+          before: '肺部感染',
+          after: '社区获得性肺炎'
+        }
+      ]
+    })
+
+    const summary = store.getWritingTraceSummary(record.id)
+    expect(summary).toMatchObject({
+      documentId: record.id,
+      patientId: 'p-001',
+      encounterId: 'enc-001',
+      status: 'signed',
+      writingEventCount: 5,
+      saveCount: 1,
+      signCount: 1,
+      reviewCount: 1,
+      fieldChangeCount: 2
+    })
+    expect(summary?.writers).toEqual(['王医生', '李主任'])
+    expect(summary?.changedFieldIds).toEqual(['legacyRemark', 'diagnosis'])
+    expect(summary?.latestEvent?.action).toBe('sign')
+  })
 })
