@@ -11,8 +11,13 @@ import {
   type TemplatePublishStatus
 } from '../../platform/emr-workbench/domain'
 import {
+  applyBusinessFieldQuickPreset,
   AuditCenterModule,
   BusinessFieldCenterModule,
+  getBusinessFieldQuickPresets,
+  recommendBusinessFieldQuickPresets,
+  type IBusinessFieldCenterFieldAsset,
+  type IBusinessFieldQuickPreset,
   PermissionCenterModule,
   QualityCenterModule
 } from '../../platform/emr-workbench/modules'
@@ -20,7 +25,12 @@ import {
   TemplateDocumentStore,
   type ITemplateDocumentRecord
 } from '../../editor/template/TemplateDocumentStore'
-import type { ITemplateBlock, ITemplateSchema } from '../../editor/template/index'
+import type {
+  ITemplateBlock,
+  ITemplateField,
+  ITemplateSchema
+} from '../../editor/template/index'
+import type { ITemplateFieldMetadata } from '../../editor/template/index'
 import {
   getResolvedTemplateBlocks,
   validateSchema
@@ -51,6 +61,8 @@ type TemplateStatusFilter = TemplatePublishStatus | 'all' | 'problem'
 type TemplateViewMode = 'card' | 'list'
 type TemplateSortMode = 'updatedDesc' | 'updatedAsc' | 'nameAsc'
 type TemplateOperationView = 'all' | 'mine' | 'recent' | 'risk' | 'todo'
+type TemplateRiskFilter = 'all' | ITemplateAdmissionReport['status']
+type TemplateRecentUsageFilter = 'all' | 'recent30d' | 'used' | 'unused'
 
 interface ITemplateWorkbenchItem extends ITemplateListItem {
   entry: ITemplateRegistryEntry
@@ -61,10 +73,35 @@ interface ITemplateWorkbenchItem extends ITemplateListItem {
   dataSourceCount: number
   issueCount: number
   admissionReport: ITemplateAdmissionReport
+  latestUsedAt?: number
+}
+
+interface ITemplateActionReportSummaryItem {
+  label: string
+  value: string | number
+}
+
+interface ITemplateActionReportRow {
+  name: string
+  detail: string
+  status: 'success' | 'warning' | 'danger'
+  statusText: string
+}
+
+interface ITemplateVersionImpactItem {
+  label: string
+  detail: string
+  badge: string
+  tone: 'success' | 'warning' | 'muted'
+}
+
+interface ITemplateVersionImpactSummary {
+  baselineText: string
+  items: ITemplateVersionImpactItem[]
 }
 
 function normalizePageDecorationConfig(
-  pageDecorations: ITemplateSchema['layout'] extends infer L
+  pageDecorations?: ITemplateSchema['layout'] extends infer L
     ? L extends { pageDecorations?: infer P }
       ? P
       : never
@@ -311,9 +348,297 @@ function getTemplateMetrics(schema: ITemplateSchema) {
   }
 }
 
+function getFieldImpactSignature(field: ITemplateField): string {
+  return JSON.stringify({
+    type: field.type,
+    label: field.label ?? '',
+    required: field.required ?? false,
+    placeholder: field.placeholder ?? '',
+    prefix: field.prefix ?? '',
+    postfix: field.postfix ?? '',
+    width: field.width ?? null,
+    options: field.options?.map(option => ({
+      label: option.label,
+      value: option.value
+    })) ?? [],
+    metadata: normalizeTemplateFieldMetadata(field.metadata ?? {}) ?? null
+  })
+}
+
+function getDecorationDescriptor(
+  decoration: { id?: string; mode?: TemplatePageDecorationMode } | undefined
+): string {
+  if (!decoration?.id) return '未设置'
+  const preset = getTemplatePageDecorationPreset(decoration.id)
+  return `${preset?.name ?? decoration.id} / ${PAGE_DECORATION_MODE_LABEL[decoration.mode ?? 'replace']}`
+}
+
+function getTemplateVersionImpactSummary(
+  currentSchema: ITemplateSchema,
+  baselineRecord?: ITemplateVersionRecord
+): ITemplateVersionImpactSummary {
+  const baselineSchema = baselineRecord?.schemaSnapshot
+  const currentIndex = buildTemplateFieldRuntimeIndex(currentSchema)
+  const baselineIndex = baselineSchema
+    ? buildTemplateFieldRuntimeIndex(baselineSchema)
+    : undefined
+  const currentRuleCount = countRules(getResolvedTemplateBlocks(currentSchema).all)
+  const baselineRuleCount = baselineSchema
+    ? countRules(getResolvedTemplateBlocks(baselineSchema).all)
+    : 0
+
+  const currentFieldIds = new Set(currentIndex.all.map(node => node.field.id))
+  const baselineFieldIds = new Set(
+    baselineIndex?.all.map(node => node.field.id) ?? []
+  )
+  const addedFieldCount = Array.from(currentFieldIds).filter(
+    fieldId => !baselineFieldIds.has(fieldId)
+  ).length
+  const removedFieldCount = Array.from(baselineFieldIds).filter(
+    fieldId => !currentFieldIds.has(fieldId)
+  ).length
+  const changedFieldCount = baselineIndex
+    ? currentIndex.all.reduce((count, node) => {
+        const previous = baselineIndex.byId.get(node.field.id)
+        if (!previous) return count
+        return count + Number(
+          getFieldImpactSignature(node.field) !==
+            getFieldImpactSignature(previous.field)
+        )
+      }, 0)
+    : 0
+
+  const currentDecorations = normalizePageDecorationConfig(
+    currentSchema.layout?.pageDecorations
+  )
+  const baselineDecorations = normalizePageDecorationConfig(
+    baselineSchema?.layout?.pageDecorations
+  )
+  const decorationVariableKeys = Array.from(
+    new Set([
+      ...Object.keys(currentDecorations?.variables ?? {}),
+      ...Object.keys(baselineDecorations?.variables ?? {})
+    ])
+  ) as TemplatePageDecorationVariableKey[]
+  const changedDecorationVariableCount = decorationVariableKeys.filter(key => {
+    return (currentDecorations?.variables?.[key] ?? '').trim() !==
+      (baselineDecorations?.variables?.[key] ?? '').trim()
+  }).length
+  const decorationParts: string[] = []
+  if (!baselineSchema) {
+    if (currentDecorations?.header?.id) {
+      decorationParts.push(
+        `首次发布包含页眉 ${getDecorationDescriptor(currentDecorations.header)}`
+      )
+    }
+    if (currentDecorations?.footer?.id) {
+      decorationParts.push(
+        `首次发布包含页脚 ${getDecorationDescriptor(currentDecorations.footer)}`
+      )
+    }
+    if (changedDecorationVariableCount) {
+      decorationParts.push(`页眉页脚变量配置 ${changedDecorationVariableCount} 项`)
+    }
+  } else {
+    const previousHeader = getDecorationDescriptor(
+      baselineDecorations?.header
+    )
+    const nextHeader = getDecorationDescriptor(currentDecorations?.header)
+    if (previousHeader !== nextHeader) {
+      decorationParts.push(`页眉 ${previousHeader} -> ${nextHeader}`)
+    }
+    const previousFooter = getDecorationDescriptor(
+      baselineDecorations?.footer
+    )
+    const nextFooter = getDecorationDescriptor(currentDecorations?.footer)
+    if (previousFooter !== nextFooter) {
+      decorationParts.push(`页脚 ${previousFooter} -> ${nextFooter}`)
+    }
+    if (changedDecorationVariableCount) {
+      decorationParts.push(`变量调整 ${changedDecorationVariableCount} 项`)
+    }
+  }
+
+  const currentSources = Array.from(
+    new Set(
+      currentIndex.all
+        .map(node => node.metadata?.dataSource)
+        .filter((value): value is string => Boolean(value))
+    )
+  ).sort((left, right) => left.localeCompare(right))
+  const baselineSources = Array.from(
+    new Set(
+      baselineIndex?.all
+        .map(node => node.metadata?.dataSource)
+        .filter((value): value is string => Boolean(value)) ?? []
+    )
+  ).sort((left, right) => left.localeCompare(right))
+  const addedSources = currentSources.filter(value => !baselineSources.includes(value))
+  const removedSources = baselineSources.filter(value => !currentSources.includes(value))
+  const changedDataSourceBindings = baselineIndex
+    ? currentIndex.all.reduce((count, node) => {
+        const previous = baselineIndex.byId.get(node.field.id)
+        if (!previous) return count
+        return count + Number(
+          (node.metadata?.dataSource ?? '') !==
+            (previous.metadata?.dataSource ?? '')
+        )
+      }, 0)
+    : 0
+
+  const fieldChangeCount = addedFieldCount + removedFieldCount + changedFieldCount
+  const ruleDelta = currentRuleCount - baselineRuleCount
+  const decorationChangeCount = decorationParts.length
+  const dataSourceChangeCount =
+    addedSources.length + removedSources.length + changedDataSourceBindings
+
+  return {
+    baselineText: baselineRecord?.schemaSnapshot
+      ? `对比线上版本 v${baselineRecord.version}`
+      : '当前模板尚无线上版本，以下按首次发布范围展示',
+    items: [
+      {
+        label: '字段变化',
+        detail: baselineSchema
+          ? fieldChangeCount
+            ? `当前 ${currentIndex.all.length} 个字段，新增 ${addedFieldCount} 个、删除 ${removedFieldCount} 个、调整 ${changedFieldCount} 个。`
+            : `当前 ${currentIndex.all.length} 个字段，与线上版本保持一致。`
+          : `首次发布共 ${currentIndex.all.length} 个字段，新增字段 ${addedFieldCount} 个。`,
+        badge: fieldChangeCount ? `${fieldChangeCount} 项变化` : '无变化',
+        tone: removedFieldCount ? 'warning' : fieldChangeCount ? 'success' : 'muted'
+      },
+      {
+        label: '规则变化',
+        detail: baselineSchema
+          ? ruleDelta
+            ? `规则总数 ${baselineRuleCount} -> ${currentRuleCount}。${ruleDelta > 0 ? '新增' : '减少'} ${Math.abs(ruleDelta)} 条。`
+            : `规则总数维持 ${currentRuleCount} 条。`
+          : `首次发布共纳入 ${currentRuleCount} 条规则。`,
+        badge: ruleDelta ? `${ruleDelta > 0 ? '+' : ''}${ruleDelta}` : '无变化',
+        tone: ruleDelta < 0 ? 'warning' : ruleDelta ? 'success' : 'muted'
+      },
+      {
+        label: '页眉页脚变化',
+        detail: decorationParts.length
+          ? decorationParts.join('；')
+          : baselineSchema
+            ? '页眉页脚方案与线上版本保持一致。'
+            : '首次发布沿用模板当前页眉页脚配置。',
+        badge: decorationChangeCount ? `${decorationChangeCount} 项变化` : '无变化',
+        tone: decorationChangeCount ? 'success' : 'muted'
+      },
+      {
+        label: '数据源变化',
+        detail: baselineSchema
+          ? dataSourceChangeCount
+            ? [
+                addedSources.length
+                  ? `新增数据源 ${addedSources.join('、')}`
+                  : undefined,
+                removedSources.length
+                  ? `移除数据源 ${removedSources.join('、')}`
+                  : undefined,
+                changedDataSourceBindings
+                  ? `字段绑定调整 ${changedDataSourceBindings} 项`
+                  : undefined
+              ].filter(Boolean).join('；')
+            : `当前共 ${currentSources.length} 个数据源绑定，与线上版本一致。`
+          : currentSources.length
+            ? `首次发布接入 ${currentSources.length} 个数据源：${currentSources.join('、')}`
+            : '首次发布暂未配置数据源绑定。',
+        badge: dataSourceChangeCount
+          ? `${dataSourceChangeCount} 项变化`
+          : currentSources.length
+            ? `${currentSources.length} 个数据源`
+            : '无变化',
+        tone: removedSources.length ? 'warning' : dataSourceChangeCount ? 'success' : 'muted'
+      }
+    ]
+  }
+}
+
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp)
   return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
+}
+
+function normalizeTemplateFieldMetadata(
+  metadata: Partial<ITemplateFieldMetadata>
+): ITemplateFieldMetadata | undefined {
+  const nextMetadata = Object.fromEntries(
+    Object.entries(metadata).filter(([, value]) => {
+      if (Array.isArray(value)) return value.length > 0
+      return typeof value === 'string' ? value.trim().length > 0 : value != null
+    })
+  ) as ITemplateFieldMetadata
+  return Object.keys(nextMetadata).length ? nextMetadata : undefined
+}
+
+function updateTemplateField(
+  schema: ITemplateSchema,
+  fieldId: string,
+  updater: (field: ITemplateField) => ITemplateField
+): ITemplateSchema {
+  const updateBlocks = (blocks: ITemplateSchema['blocks']): ITemplateSchema['blocks'] => {
+    return blocks.map(block => {
+      if (block.type === 'fieldRow') {
+        return {
+          ...block,
+          fields: block.fields.map(field => {
+            return field.id === fieldId ? updater(field) : field
+          })
+        }
+      }
+      if (block.type === 'paragraph') {
+        return {
+          ...block,
+          segments: block.segments.map(segment => {
+            if (segment.type !== 'field' || segment.field.id !== fieldId) return segment
+            return {
+              ...segment,
+              field: updater(segment.field)
+            }
+          })
+        }
+      }
+      if (block.type === 'table') {
+        return {
+          ...block,
+          columns: block.columns.map(column => {
+            if (!column.field || column.field.id !== fieldId) return column
+            return {
+              ...column,
+              field: updater(column.field)
+            }
+          })
+        }
+      }
+      if (block.type === 'section' || block.type === 'group') {
+        return {
+          ...block,
+          blocks: updateBlocks(block.blocks)
+        }
+      }
+      return block
+    })
+  }
+
+  return {
+    ...schema,
+    blocks: updateBlocks(schema.blocks)
+  }
+}
+
+function updateTemplateFieldMetadata(
+  schema: ITemplateSchema,
+  fieldId: string,
+  metadata: Partial<ITemplateFieldMetadata>
+): ITemplateSchema {
+  const nextMetadata = normalizeTemplateFieldMetadata(metadata)
+  return updateTemplateField(schema, fieldId, field => ({
+    ...field,
+    metadata: nextMetadata
+  }))
 }
 
 export class TemplateManager {
@@ -328,6 +653,11 @@ export class TemplateManager {
   private sortMode: TemplateSortMode = 'updatedDesc'
   private operationView: TemplateOperationView = 'all'
   private searchKeyword = ''
+  private departmentFilter = ''
+  private documentTypeFilter = ''
+  private ownerFilter = ''
+  private riskFilter: TemplateRiskFilter = 'all'
+  private recentUsageFilter: TemplateRecentUsageFilter = 'all'
   private sidebarEl!: HTMLDivElement
   private statsEl!: HTMLDivElement
   private bodyEl!: HTMLDivElement
@@ -459,6 +789,33 @@ export class TemplateManager {
       this._renderBody()
     })
 
+    const department = document.createElement('input')
+    department.className = 'tm-toolbar__input'
+    department.type = 'search'
+    department.placeholder = '科室筛选'
+    department.addEventListener('input', () => {
+      this.departmentFilter = department.value.trim().toLowerCase()
+      this._renderBody()
+    })
+
+    const documentType = document.createElement('input')
+    documentType.className = 'tm-toolbar__input'
+    documentType.type = 'search'
+    documentType.placeholder = '文书类型'
+    documentType.addEventListener('input', () => {
+      this.documentTypeFilter = documentType.value.trim().toLowerCase()
+      this._renderBody()
+    })
+
+    const owner = document.createElement('input')
+    owner.className = 'tm-toolbar__input'
+    owner.type = 'search'
+    owner.placeholder = '负责人'
+    owner.addEventListener('input', () => {
+      this.ownerFilter = owner.value.trim().toLowerCase()
+      this._renderBody()
+    })
+
     const status = document.createElement('select')
     status.className = 'tm-select'
     STATUS_FILTERS.forEach(item => {
@@ -490,6 +847,42 @@ export class TemplateManager {
       this._renderBody()
     })
 
+    const risk = document.createElement('select')
+    risk.className = 'tm-select'
+    ;([
+      { value: 'all', label: '风险状态' },
+      { value: 'passed', label: '准入通过' },
+      { value: 'warning', label: '待确认' },
+      { value: 'blocked', label: '准入阻断' }
+    ]).forEach(item => {
+      const option = document.createElement('option')
+      option.value = item.value
+      option.textContent = item.label
+      risk.append(option)
+    })
+    risk.addEventListener('change', () => {
+      this.riskFilter = risk.value as TemplateRiskFilter
+      this._renderBody()
+    })
+
+    const recentUsage = document.createElement('select')
+    recentUsage.className = 'tm-select'
+    ;([
+      { value: 'all', label: '最近使用' },
+      { value: 'recent30d', label: '30 天内使用' },
+      { value: 'used', label: '曾被使用' },
+      { value: 'unused', label: '尚未使用' }
+    ]).forEach(item => {
+      const option = document.createElement('option')
+      option.value = item.value
+      option.textContent = item.label
+      recentUsage.append(option)
+    })
+    recentUsage.addEventListener('change', () => {
+      this.recentUsageFilter = recentUsage.value as TemplateRecentUsageFilter
+      this._renderBody()
+    })
+
     const view = document.createElement('div')
     view.className = 'tm-view-toggle'
 
@@ -497,7 +890,17 @@ export class TemplateManager {
     const listBtn = this._createViewButton('列表', 'list')
     view.append(cardBtn, listBtn)
 
-    toolbar.append(search, status, sort, view)
+    toolbar.append(
+      search,
+      department,
+      documentType,
+      owner,
+      status,
+      risk,
+      recentUsage,
+      sort,
+      view
+    )
     return toolbar
   }
 
@@ -618,9 +1021,20 @@ export class TemplateManager {
   ): boolean {
     if (view === 'all') return true
     if (view === 'mine') return (item.entry.asset?.owner ?? '模板管理员') === '模板管理员'
-    if (view === 'recent') return Date.now() - item.updatedAt <= 1000 * 60 * 60 * 24 * 30
+    if (view === 'recent') return this._matchesRecentUsageFilter(item, 'recent30d')
     if (view === 'risk') return item.admissionReport.status !== 'passed'
     return item.entry.status !== 'published' || item.admissionReport.status === 'blocked'
+  }
+
+  private _matchesRecentUsageFilter(
+    item: ITemplateWorkbenchItem,
+    filter: TemplateRecentUsageFilter = this.recentUsageFilter
+  ): boolean {
+    const latestUsedAt = item.latestUsedAt
+    if (filter === 'all') return true
+    if (filter === 'unused') return !latestUsedAt
+    if (filter === 'used') return Boolean(latestUsedAt)
+    return Boolean(latestUsedAt && Date.now() - latestUsedAt <= 1000 * 60 * 60 * 24 * 30)
   }
 
   private _createSidebarSection(
@@ -714,11 +1128,19 @@ export class TemplateManager {
       .map(item => {
         const entry = this.templateDomain.getEntry(item.id)
         if (!entry) return null
+        const latestUsedAt = this.medicalRecordDomain.listByTemplate(item.id)
+          .reduce<number | undefined>((latest, record) => {
+            if (latest == null || record.updatedAt > latest) {
+              return record.updatedAt
+            }
+            return latest
+          }, undefined)
         return {
           ...item,
           entry,
           ...getTemplateMetrics(entry.schema),
-          admissionReport: this.templateDomain.buildAdmissionReport(entry)
+          admissionReport: this.templateDomain.buildAdmissionReport(entry),
+          latestUsedAt
         }
       })
       .filter(Boolean) as ITemplateWorkbenchItem[]
@@ -734,8 +1156,30 @@ export class TemplateManager {
           return false
         }
         if (!this._matchesOperationView(item)) return false
+        const asset = item.entry.asset ?? {}
+        if (
+          this.departmentFilter &&
+          !(asset.department ?? '').toLowerCase().includes(this.departmentFilter)
+        ) {
+          return false
+        }
+        if (
+          this.documentTypeFilter &&
+          !(asset.documentType ?? '').toLowerCase().includes(this.documentTypeFilter)
+        ) {
+          return false
+        }
+        if (
+          this.ownerFilter &&
+          !(asset.owner ?? '').toLowerCase().includes(this.ownerFilter)
+        ) {
+          return false
+        }
+        if (this.riskFilter !== 'all' && item.admissionReport.status !== this.riskFilter) {
+          return false
+        }
+        if (!this._matchesRecentUsageFilter(item)) return false
         if (this.searchKeyword) {
-          const asset = item.entry.asset ?? {}
           const haystack = [
             item.name,
             item.description,
@@ -931,6 +1375,7 @@ export class TemplateManager {
       { label: '资产信息', handler: () => this._openAssetDialog(item) },
       { label: '准入报告', handler: () => this._openAdmissionReport(item) },
       { label: '试运行验证', handler: () => this._openTrialRun(item) },
+      { label: '迁移预览', handler: () => this._openMigrationPreview(item) },
       { label: '影响范围', handler: () => this._openClinicalImpact(item) },
       { label: '引用病历追溯', handler: () => this._openDocumentTrace(item) },
       { label: '版本管理', handler: () => this._openVersionCenter(item) },
@@ -1218,6 +1663,235 @@ export class TemplateManager {
     })
   }
 
+  private _openMigrationPreview(item: ITemplateWorkbenchItem) {
+    type IMigrationPreviewReportItem = {
+      record: ReturnType<MedicalRecordDomainService['listByTemplate']>[number]
+      preview: NonNullable<ReturnType<MedicalRecordDomainService['previewMigration']>>
+      previousRuleCount: number
+      nextRuleCount: number
+      mappingText: string
+      requiredText: string
+      droppedText: string
+      ambiguousText: string
+      status: {
+        badgeClass: string
+        badgeText: string
+      }
+    }
+
+    const documents = this.medicalRecordDomain.listByTemplate(item.id)
+    const outdatedDocuments = documents.filter(
+      record => record.template.version !== item.entry.schema.version
+    )
+    const targetDocuments = outdatedDocuments.length ? outdatedDocuments : documents
+    const content = document.createElement('div')
+    content.className = 'tm-version-center'
+
+    const previews: IMigrationPreviewReportItem[] = targetDocuments
+      .map(record => {
+        const preview = this.medicalRecordDomain.previewMigration(
+          record.id,
+          item.entry.schema
+        )
+        if (!preview) return null
+
+        const sourceIndex = buildTemplateFieldRuntimeIndex(record.template.snapshot)
+        const targetIndex = buildTemplateFieldRuntimeIndex(item.entry.schema)
+        const previousRuleCount = countRules(record.template.snapshot.blocks)
+        const nextRuleCount = countRules(item.entry.schema.blocks)
+        const requiredIssues = preview.unresolvedFields.filter(
+          field => field.reason === 'required'
+        )
+        const ambiguousIssues = preview.unresolvedFields.filter(
+          field => field.reason === 'ambiguous'
+        )
+
+        const summarize = (values: string[], emptyText = '无') => {
+          if (!values.length) return emptyText
+          const limited = values.slice(0, 3)
+          return values.length > 3
+            ? `${limited.join('、')} 等 ${values.length} 项`
+            : limited.join('、')
+        }
+
+        const mappingText = summarize(
+          preview.mappings.map(mapping => {
+            const sourceLabel =
+              sourceIndex.byId.get(mapping.fromFieldId)?.field.label
+              || mapping.fromFieldId
+            const targetLabel =
+              targetIndex.byId.get(mapping.toFieldId)?.field.label
+              || mapping.toFieldId
+            return `${sourceLabel}→${targetLabel}`
+          })
+        )
+
+        const requiredText = summarize(
+          requiredIssues.map(field => field.label || field.fieldId)
+        )
+        const droppedText = summarize(
+          preview.droppedFields.map(field => field.label || field.fieldId)
+        )
+        const ambiguousText = summarize(
+          ambiguousIssues.map(field => field.label || field.fieldId)
+        )
+
+        const status = !preview.canAutoApply
+          ? {
+              badgeClass: 'tm-center-badge tm-center-badge--danger',
+              badgeText: '新增必填阻断'
+            }
+          : preview.requiresManualConfirmation
+            ? {
+                badgeClass: 'tm-center-badge tm-center-badge--warning',
+                badgeText: '需人工确认'
+              }
+            : {
+                badgeClass: 'tm-center-badge tm-center-badge--success',
+                badgeText: '可直接迁移'
+              }
+
+        return {
+          record,
+          preview,
+          previousRuleCount,
+          nextRuleCount,
+          mappingText,
+          requiredText,
+          droppedText,
+          ambiguousText,
+          status
+        }
+      })
+      .filter(
+        (
+          previewItem
+        ): previewItem is IMigrationPreviewReportItem => previewItem !== null
+      )
+
+    const autoApplyCount = previews.filter(
+      item => item.preview.canAutoApply && !item.preview.requiresManualConfirmation
+    ).length
+    const manualConfirmCount = previews.filter(
+      item => item.preview.canAutoApply && item.preview.requiresManualConfirmation
+    ).length
+    const blockedCount = previews.filter(item => !item.preview.canAutoApply).length
+
+    const summary = document.createElement('div')
+    summary.className = 'tm-version-center__summary'
+    summary.innerHTML = `
+      <div><span>引用病历</span><strong>${documents.length}</strong></div>
+      <div><span>待升级病历</span><strong>${outdatedDocuments.length}</strong></div>
+      <div><span>可直接迁移</span><strong>${autoApplyCount}</strong></div>
+      <div><span>需确认 / 阻断</span><strong>${manualConfirmCount}/${blockedCount}</strong></div>
+    `
+    content.append(summary)
+
+    if (!documents.length) {
+      const empty = document.createElement('div')
+      empty.className = 'tm-empty'
+      empty.textContent = '当前模板还没有引用病历，待生成病历实例后即可查看迁移预览。'
+      content.append(empty)
+    } else {
+      const tip = document.createElement('div')
+      tip.className = `tm-release-flow__check${blockedCount ? ' tm-release-flow__check--warn' : ''}`
+      tip.textContent = outdatedDocuments.length
+        ? `当前优先展示 ${outdatedDocuments.length} 份非最新模板版本病历的迁移预览；规则变化风险按病历快照模板与当前模板对比计算。`
+        : '当前所有引用病历都已处于最新模板版本，以下展示的是同版本迁移预览，用于确认新增规则和字段影响。'
+      content.append(tip)
+    }
+
+    previews.forEach(itemPreview => {
+      const group = document.createElement('div')
+      group.className = 'tm-trace-group'
+
+      const header = document.createElement('div')
+      header.className = 'tm-center-inline'
+      const title = document.createElement('div')
+      title.className = 'tm-trace-group__title'
+      title.textContent = `${itemPreview.record.title || itemPreview.record.id} · v${itemPreview.record.template.version} -> v${item.entry.schema.version}`
+      const badge = document.createElement('span')
+      badge.className = itemPreview.status.badgeClass
+      badge.textContent = itemPreview.status.badgeText
+      header.append(title, badge)
+      group.append(header)
+
+      const meta = document.createElement('div')
+      meta.className = 'tm-adapter-card__sources'
+      meta.textContent = `病历状态 ${itemPreview.record.status} / 最近更新 ${formatTime(itemPreview.record.updatedAt)}`
+      group.append(meta)
+
+      const list = document.createElement('div')
+      list.className = 'tm-center-list'
+
+      const rows = [
+        {
+          name: `保留字段 ${itemPreview.preview.mappings.length} 项`,
+          detail: itemPreview.mappingText,
+          badgeText: itemPreview.preview.mappings.length ? '已映射' : '无映射',
+          badgeClass: 'tm-center-badge tm-center-badge--success'
+        },
+        {
+          name: `新增必填字段 ${itemPreview.preview.unresolvedFields.filter(field => field.reason === 'required').length} 项`,
+          detail: itemPreview.requiredText,
+          badgeText: itemPreview.preview.unresolvedFields.some(field => field.reason === 'required')
+            ? '需补录'
+            : '无阻断',
+          badgeClass: itemPreview.preview.unresolvedFields.some(field => field.reason === 'required')
+            ? 'tm-center-badge tm-center-badge--danger'
+            : 'tm-center-badge tm-center-badge--success'
+        },
+        {
+          name: `丢失字段 ${itemPreview.preview.droppedFields.length} 项`,
+          detail: itemPreview.droppedText,
+          badgeText: itemPreview.preview.droppedFields.length ? '需复核' : '无丢失',
+          badgeClass: itemPreview.preview.droppedFields.length
+            ? 'tm-center-badge tm-center-badge--warning'
+            : 'tm-center-badge tm-center-badge--success'
+        },
+        {
+          name: `规则变化风险 ${itemPreview.previousRuleCount} -> ${itemPreview.nextRuleCount}`,
+          detail: itemPreview.previousRuleCount === itemPreview.nextRuleCount
+            ? `规则数量无变化${itemPreview.ambiguousText !== '无' ? ` / 歧义字段：${itemPreview.ambiguousText}` : ''}`
+            : `规则数量发生变化，建议复核触发条件与联动影响${itemPreview.ambiguousText !== '无' ? ` / 歧义字段：${itemPreview.ambiguousText}` : ''}`,
+          badgeText: itemPreview.previousRuleCount === itemPreview.nextRuleCount
+            ? '稳定'
+            : '需复核',
+          badgeClass: itemPreview.previousRuleCount === itemPreview.nextRuleCount
+            ? 'tm-center-badge tm-center-badge--success'
+            : 'tm-center-badge tm-center-badge--warning'
+        }
+      ]
+
+      rows.forEach(row => {
+        const item = document.createElement('div')
+        item.className = 'tm-center-list__row'
+        const info = document.createElement('div')
+        info.className = 'tm-center-list__info'
+        const name = document.createElement('strong')
+        name.textContent = row.name
+        const detail = document.createElement('small')
+        detail.textContent = row.detail
+        info.append(name, detail)
+        const rowBadge = document.createElement('span')
+        rowBadge.className = row.badgeClass
+        rowBadge.textContent = row.badgeText
+        item.append(info, rowBadge)
+        list.append(item)
+      })
+
+      group.append(list)
+      content.append(group)
+    })
+
+    TemplateFeedback.openDialog({
+      title: `${item.name} · 模板迁移预览`,
+      content,
+      width: 760,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
   private _openDocumentTrace(item: ITemplateWorkbenchItem) {
     const documents = this.medicalRecordDomain.listByTemplate(item.id)
     const content = document.createElement('div')
@@ -1315,20 +1989,105 @@ export class TemplateManager {
     const records = item.entry.versionHistory.length
       ? item.entry.versionHistory
       : [{ status: item.entry.status, version: item.entry.schema.version, timestamp: item.updatedAt }]
+    const historyTitle = document.createElement('div')
+    historyTitle.className = 'tm-version-center__section-title'
+    historyTitle.textContent = '版本记录'
     records.slice().reverse().forEach(record => {
       history.append(this._renderVersionRecord(record))
     })
-    content.append(summary, history)
+    content.append(summary, this._renderVersionImpactSummary(item), historyTitle, history)
     TemplateFeedback.openDialog({
       title: `${item.name} · 版本中心`,
       content,
       width: 640,
-      actions: [{ label: '关闭', variant: 'primary' }]
+      actions: [
+        ...(!item.builtIn && this.templateDomain.getLatestPublishedRecord(item.id)?.schemaSnapshot
+          ? [{
+              label: '复制线上版本为修订草稿',
+              onClick: () => this._createRevisionDraftFromPublished(item)
+            }]
+          : []),
+        { label: '关闭', variant: 'primary' }
+      ]
     })
+  }
+
+  private async _createRevisionDraftFromPublished(item: ITemplateWorkbenchItem) {
+    const published = this.templateDomain.getLatestPublishedRecord(item.id)
+    if (!published?.schemaSnapshot) {
+      TemplateFeedback.toast('当前模板还没有线上版本，无法生成修订草稿', 'info')
+      return
+    }
+    const confirmed = await TemplateFeedback.confirm({
+      title: '生成修订草稿',
+      message: `确认基于线上版本 v${published.version} 生成修订草稿？当前工作版本会被线上快照覆盖，试运行记录需要重新补录。`,
+      confirmText: '生成草稿'
+    })
+    if (!confirmed) return
+    const draft = this.templateDomain.createRevisionDraftFromPublished(
+      item.id,
+      '模板管理员'
+    )
+    if (!draft) {
+      TemplateFeedback.alert({
+        title: '生成失败',
+        message: '未找到可用的线上版本快照',
+        tone: 'warning'
+      })
+      return
+    }
+    this._refreshWorkbench()
+    const nextEntry = this.templateDomain.getEntry(item.id)
+    if (nextEntry) {
+      this._openDesigner(nextEntry)
+    }
+    TemplateFeedback.toast('已生成修订草稿，请重新试运行并走发布准入', 'success')
   }
 
   private _getPublishedVersion(entry: ITemplateRegistryEntry): string {
     return this.templateDomain.getPublishedVersion(entry)
+  }
+
+  private _renderVersionImpactSummary(
+    item: ITemplateWorkbenchItem
+  ): HTMLDivElement {
+    const latestPublished = this.templateDomain.getLatestPublishedRecord(item.id)
+    const summary = getTemplateVersionImpactSummary(
+      item.entry.schema,
+      latestPublished
+    )
+    const section = document.createElement('div')
+
+    const title = document.createElement('div')
+    title.className = 'tm-version-center__section-title'
+    title.textContent = '本次变更影响摘要'
+
+    const helper = document.createElement('div')
+    helper.className = 'tm-adapter-card__sources'
+    helper.textContent = summary.baselineText
+
+    const list = document.createElement('div')
+    list.className = 'tm-center-list'
+    summary.items.forEach(itemSummary => {
+      const row = document.createElement('div')
+      row.className = 'tm-center-list__row'
+      const info = document.createElement('div')
+      info.className = 'tm-center-list__info'
+      const label = document.createElement('strong')
+      label.textContent = itemSummary.label
+      const detail = document.createElement('small')
+      detail.textContent = itemSummary.detail
+      info.append(label, detail)
+
+      const badge = document.createElement('span')
+      badge.className = `tm-center-badge tm-center-badge--${itemSummary.tone}`
+      badge.textContent = itemSummary.badge
+      row.append(info, badge)
+      list.append(row)
+    })
+
+    section.append(title, helper, list)
+    return section
   }
 
   private _renderVersionRecord(record: ITemplateVersionRecord): HTMLDivElement {
@@ -1476,6 +2235,12 @@ export class TemplateManager {
     exportBtn.type = 'button'
     exportBtn.addEventListener('click', () => this._exportJSON())
 
+    const batchReviewBtn = document.createElement('button')
+    batchReviewBtn.className = 'td-designer__btn td-designer__btn--ghost'
+    batchReviewBtn.textContent = '批量送审当前视图'
+    batchReviewBtn.type = 'button'
+    batchReviewBtn.addEventListener('click', () => this._batchSubmitForReview())
+
     const businessBtn = document.createElement('button')
     businessBtn.className = 'td-designer__btn'
     businessBtn.textContent = '业务字段中心'
@@ -1503,6 +2268,7 @@ export class TemplateManager {
     footer.append(
       importBtn,
       exportBtn,
+      batchReviewBtn,
       businessBtn,
       permissionBtn,
       qualityBtn,
@@ -1536,16 +2302,186 @@ export class TemplateManager {
 
   private _openBusinessFieldCenter() {
     const content = this.businessFieldCenter.createDialogContent({
-      items: this._getWorkbenchItems(false),
-      adapters: this.templateDomain.listDataAdapters()
+      getItems: () => this._getWorkbenchItems(false),
+      getAdapters: () => this.templateDomain.listDataAdapters(),
+      onQuickApplyField: (field, rerender) =>
+        this._openBusinessFieldQuickApplyDialog(field, rerender),
+      onMaintainField: (field, rerender) => this._openBusinessFieldAssetDialog(field, rerender),
+      onOpenTemplate: templateId => {
+        const entry = this.templateDomain.getEntry(templateId)
+        if (entry) {
+          this._openDesigner(entry)
+        }
+      }
     })
 
     TemplateFeedback.openDialog({
       title: '业务字段中心',
       content,
-      width: 620,
+      width: 860,
       actions: [{ label: '关闭', variant: 'primary' }]
     })
+  }
+
+  private _openBusinessFieldQuickApplyDialog(
+    field: IBusinessFieldCenterFieldAsset,
+    rerender: () => void
+  ) {
+    const recommended = recommendBusinessFieldQuickPresets({
+      id: field.fieldId,
+      label: field.label,
+      metadata: {
+        businessCode: field.businessCode || undefined,
+        group: field.group || undefined,
+        dataSource: field.dataSource || undefined,
+        permission: field.permission || undefined,
+        exportPath: field.exportPath || undefined
+      }
+    })
+    const recommendedIds = new Set(recommended.map(item => item.id))
+    const allPresets = getBusinessFieldQuickPresets()
+    const fallbackPresets = allPresets.filter(item => !recommendedIds.has(item.id))
+    const content = document.createElement('div')
+    content.className = 'tm-governance-form'
+
+    const hint = document.createElement('div')
+    hint.className = 'tm-adapter-card__sources'
+    hint.textContent = '点击下方任一快配后，会立即把控件类型、占位文案、业务编码、导出路径、数据源和权限标签一起回写到模板字段。'
+
+    const appendPresetGrid = (
+      titleText: string,
+      presets: IBusinessFieldQuickPreset[],
+      helperText?: string
+    ) => {
+      const title = document.createElement('div')
+      title.className = 'tm-version-center__section-title'
+      title.textContent = titleText
+      content.append(title)
+      if (helperText) {
+        const helper = document.createElement('div')
+        helper.className = 'tm-adapter-card__sources'
+        helper.textContent = helperText
+        content.append(helper)
+      }
+      const grid = document.createElement('div')
+      grid.className = 'td-props__preset-grid'
+      presets.forEach(preset => {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'td-props__preset-card'
+        const label = document.createElement('strong')
+        label.textContent = preset.label
+        const desc = document.createElement('span')
+        desc.textContent = preset.description
+        btn.append(label, desc)
+        btn.onclick = () => this._quickApplyBusinessFieldPreset(field, preset, rerender)
+        grid.append(btn)
+      })
+      content.append(grid)
+    }
+
+    content.append(hint)
+    if (recommended.length) {
+      appendPresetGrid(
+        '智能推荐',
+        recommended,
+        `已根据字段名、标签和现有绑定推断出更可能命中的快配：${recommended.map(item => item.label).join('、')}`
+      )
+    }
+    appendPresetGrid(
+      recommended.length ? '全部业务快配' : '业务快配',
+      recommended.length ? fallbackPresets : allPresets
+    )
+
+    TemplateFeedback.openDialog({
+      title: `${field.label} · 字段快配`,
+      content,
+      width: 640,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private _openBusinessFieldAssetDialog(
+    field: IBusinessFieldCenterFieldAsset,
+    rerender: () => void
+  ) {
+    const entry = this.templateDomain.getEntry(field.templateId)
+    if (!entry || entry.builtIn) {
+      TemplateFeedback.toast('内置模板字段暂不支持直接维护，可先生成草稿后再编辑', 'info')
+      return
+    }
+
+    const content = document.createElement('div')
+    content.className = 'tm-governance-form'
+    const businessCode = this._createTextInput(field.businessCode, 'patient.name')
+    const group = this._createTextInput(field.group, '基本信息')
+    const dataSource = this._createTextInput(field.dataSource, 'patient')
+    const permission = this._createTextInput(field.permission, 'doctor.read')
+    const exportPath = this._createTextInput(field.exportPath, 'patient.name')
+    content.append(
+      this._createGovernanceRow('业务编码', businessCode),
+      this._createGovernanceRow('字段分组', group),
+      this._createGovernanceRow('数据源', dataSource),
+      this._createGovernanceRow('权限标签', permission),
+      this._createGovernanceRow('导出路径', exportPath)
+    )
+
+    TemplateFeedback.openDialog({
+      title: `${field.label} · 字段资产维护`,
+      content,
+      width: 560,
+      actions: [
+        {
+          label: '保存字段资产',
+          variant: 'primary',
+          onClick: () => {
+            const nextSchema = updateTemplateFieldMetadata(
+              entry.schema,
+              field.fieldId,
+              {
+                ...(entry.schema ? buildTemplateFieldRuntimeIndex(entry.schema).byId.get(field.fieldId)?.field.metadata : {}),
+                businessCode: businessCode.value.trim(),
+                group: group.value.trim(),
+                dataSource: dataSource.value.trim(),
+                permission: permission.value.trim(),
+                exportPath: exportPath.value.trim()
+              }
+            )
+            this.templateDomain.register(nextSchema, entry.category, false, {
+              note: `维护字段资产 ${field.label}`,
+              operator: '模板管理员'
+            })
+            this._refreshWorkbench()
+            rerender()
+            TemplateFeedback.toast('字段资产已保存', 'success')
+          }
+        }
+      ]
+    })
+  }
+
+  private _quickApplyBusinessFieldPreset(
+    field: IBusinessFieldCenterFieldAsset,
+    preset: IBusinessFieldQuickPreset,
+    rerender: () => void
+  ) {
+    const entry = this.templateDomain.getEntry(field.templateId)
+    if (!entry || entry.builtIn) {
+      TemplateFeedback.toast('内置模板字段暂不支持字段快配，可先生成草稿后再编辑', 'info')
+      return
+    }
+
+    const nextSchema = updateTemplateField(entry.schema, field.fieldId, currentField => {
+      return applyBusinessFieldQuickPreset(currentField, preset)
+    })
+
+    this.templateDomain.register(nextSchema, entry.category, false, {
+      note: `字段快配 ${preset.label} -> ${field.label}`,
+      operator: '模板管理员'
+    })
+    this._refreshWorkbench()
+    rerender()
+    TemplateFeedback.toast(`已套用字段快配：${preset.label}`, 'success')
   }
 
   private _openAuditCenter() {
@@ -1838,6 +2774,66 @@ export class TemplateManager {
     }
   }
 
+  private _openActionReport(options: {
+    title: string
+    summary: ITemplateActionReportSummaryItem[]
+    rows: ITemplateActionReportRow[]
+    emptyText: string
+    width?: number
+  }) {
+    const content = document.createElement('div')
+    content.className = 'tm-version-center'
+
+    const summary = document.createElement('div')
+    summary.className = 'tm-version-center__summary'
+    options.summary.forEach(item => {
+      const box = document.createElement('div')
+      box.innerHTML = `<span>${item.label}</span><strong>${item.value}</strong>`
+      summary.append(box)
+    })
+    content.append(summary)
+
+    if (!options.rows.length) {
+      const empty = document.createElement('div')
+      empty.className = 'tm-empty'
+      empty.textContent = options.emptyText
+      content.append(empty)
+    } else {
+      const list = document.createElement('div')
+      list.className = 'tm-center-list'
+      options.rows.forEach(row => {
+        const item = document.createElement('div')
+        item.className = 'tm-center-list__row'
+        const info = document.createElement('div')
+        info.className = 'tm-center-list__info'
+        const name = document.createElement('strong')
+        name.textContent = row.name
+        const detail = document.createElement('small')
+        detail.textContent = row.detail
+        info.append(name, detail)
+
+        const badge = document.createElement('span')
+        badge.className =
+          row.status === 'success'
+            ? 'tm-center-badge tm-center-badge--success'
+            : row.status === 'warning'
+              ? 'tm-center-badge tm-center-badge--warning'
+              : 'tm-center-badge tm-center-badge--danger'
+        badge.textContent = row.statusText
+        item.append(info, badge)
+        list.append(item)
+      })
+      content.append(list)
+    }
+
+    TemplateFeedback.openDialog({
+      title: options.title,
+      content,
+      width: options.width ?? 720,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
   private _importJSON() {
     const input = document.createElement('input')
     input.type = 'file'
@@ -1849,9 +2845,42 @@ export class TemplateManager {
       reader.onload = e => {
         try {
           const json = e.target?.result as string
-          const schema = this.templateDomain.importSchema(json, '自定义')
-          TemplateFeedback.toast(`导入成功：${schema.name}`, 'success')
-          this._refreshWorkbench()
+          const result = this.templateDomain.importSchemas(json, '自定义')
+          const createdCount = result.imported.filter(item => item.mode === 'created').length
+          const updatedCount = result.imported.filter(item => item.mode === 'updated').length
+          const rows: ITemplateActionReportRow[] = [
+            ...result.imported.map(item => {
+              const metrics = getTemplateMetrics(item.schema)
+              return {
+                name: item.schema.name,
+                detail: `${item.mode === 'created' ? '新增导入' : '覆盖更新'} / 字段 ${metrics.fieldCount} / 规则 ${metrics.ruleCount}`,
+                status: 'success' as const,
+                statusText: item.mode === 'created' ? '已导入' : '已更新'
+              }
+            }),
+            ...result.failed.map(item => ({
+              name: item.name,
+              detail: item.message,
+              status: 'danger' as const,
+              statusText: '失败'
+            }))
+          ]
+
+          if (result.imported.length) {
+            this._refreshWorkbench()
+          }
+
+          this._openActionReport({
+            title: `导入结果 · ${file.name}`,
+            summary: [
+              { label: '成功导入', value: result.imported.length },
+              { label: '新增模板', value: createdCount },
+              { label: '覆盖更新', value: updatedCount },
+              { label: '失败项', value: result.failed.length }
+            ],
+            rows,
+            emptyText: '当前文件没有可导入的模板。'
+          })
         } catch (err) {
           TemplateFeedback.alert({
             title: '导入失败',
@@ -1883,9 +2912,119 @@ export class TemplateManager {
     const a = document.createElement('a')
     a.href = url
     const label = this.activeCategory === '全部' ? 'all' : this.activeCategory
-    a.download = `templates-${label}.json`
+    const fileName = `templates-${label}.json`
+    a.download = fileName
     a.click()
     URL.revokeObjectURL(url)
+
+    this._openActionReport({
+      title: '导出结果',
+      summary: [
+        { label: '导出模板', value: items.length },
+        { label: '导出分类', value: this.activeCategory },
+        { label: '导出文件', value: fileName },
+        { label: '文件大小', value: `${Math.max(1, Math.round(blob.size / 1024))} KB` }
+      ],
+      rows: items.slice(0, 12).map(item => ({
+        name: item.name,
+        detail: `${STATUS_LABEL[item.entry.status]} / v${item.entry.schema.version} / ${item.category}`,
+        status: 'success' as const,
+        statusText: '已导出'
+      })),
+      emptyText: '当前视图没有可导出的模板。'
+    })
+  }
+
+  private async _batchSubmitForReview() {
+    const items = this._getWorkbenchItems()
+    if (!items.length) {
+      await TemplateFeedback.alert({
+        title: '无法批量送审',
+        message: '当前视图没有可处理的模板。',
+        tone: 'warning'
+      })
+      return
+    }
+
+    const eligibleItems = items.filter(item => {
+      return !item.builtIn && item.entry.status !== 'review' && item.entry.status !== 'published'
+    })
+    const skippedItems = items.filter(item => !eligibleItems.includes(item))
+
+    if (!eligibleItems.length) {
+      await TemplateFeedback.alert({
+        title: '无法批量送审',
+        message: '当前视图中的模板均为内置模板、已送审或已发布状态。',
+        tone: 'warning'
+      })
+      return
+    }
+
+    const confirmed = await TemplateFeedback.confirm({
+      title: '批量送审当前视图',
+      message: skippedItems.length
+        ? `确认将 ${eligibleItems.length} 个模板批量送审？另外会跳过 ${skippedItems.length} 个内置模板或已进入流程的模板。`
+        : `确认将当前视图中的 ${eligibleItems.length} 个模板批量送审？`,
+      confirmText: '开始送审'
+    })
+    if (!confirmed) return
+
+    const successRows: ITemplateActionReportRow[] = []
+    const failedRows: ITemplateActionReportRow[] = []
+    const skippedRows: ITemplateActionReportRow[] = skippedItems.map(item => ({
+      name: item.name,
+      detail: item.builtIn
+        ? '内置模板默认视为平台资产，不参与批量送审。'
+        : item.entry.status === 'review'
+          ? '模板已处于待审核状态。'
+          : '模板已发布，无需再次送审。',
+      status: 'warning',
+      statusText: '跳过'
+    }))
+
+    eligibleItems.forEach(item => {
+      const result = this.templateDomain.runReleaseAction(
+        'review',
+        item.id,
+        item.admissionReport,
+        {
+          note: '工作台批量送审',
+          reason: '按当前筛选结果批量送审'
+        }
+      )
+
+      if (result.applied) {
+        successRows.push({
+          name: item.name,
+          detail: `已送审 / ${item.category} / v${item.entry.schema.version}`,
+          status: 'success',
+          statusText: '成功'
+        })
+      } else {
+        failedRows.push({
+          name: item.name,
+          detail: result.errors.join('；') || '送审失败',
+          status: 'danger',
+          statusText: '失败'
+        })
+      }
+    })
+
+    if (successRows.length) {
+      this._refreshWorkbench()
+    }
+
+    this._openActionReport({
+      title: '批量送审结果',
+      summary: [
+        { label: '送审成功', value: successRows.length },
+        { label: '送审失败', value: failedRows.length },
+        { label: '已跳过', value: skippedRows.length },
+        { label: '当前视图', value: items.length }
+      ],
+      rows: [...successRows, ...failedRows, ...skippedRows],
+      emptyText: '当前没有生成任何批量送审记录。'
+    })
   }
 
   private _dispose() {

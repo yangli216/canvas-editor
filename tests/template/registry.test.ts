@@ -151,6 +151,40 @@ describe('template registry lifecycle', () => {
     expect(latestPublished?.schemaSnapshot?.version).toBe('1.0.0')
   })
 
+  it('可以从线上版本生成修订草稿并要求重新试运行', () => {
+    const id = `registry-revision-${Date.now()}`
+    const schema = createSchema(id)
+    templateRegistry.register(schema, '住院记录', false)
+    templateRegistry.addTrialRun(id, {
+      scenario: '首版验证',
+      status: 'passed',
+      summary: '首版已通过'
+    })
+    templateRegistry.publish(id, '首版上线')
+
+    templateRegistry.register(
+      {
+        ...schema,
+        description: '存在临时改坏的工作版本'
+      },
+      '住院记录',
+      false,
+      {
+        note: '错误改动'
+      }
+    )
+
+    const revision = templateRegistry.createRevisionDraftFromPublished(id, {
+      note: '基于线上版本生成修订草稿',
+      operator: '模板管理员'
+    })
+
+    expect(revision?.description).toBeUndefined()
+    expect(templateRegistry.getEntry(id)?.status).toBe('draft')
+    expect(templateRegistry.getTrialRuns(id)).toHaveLength(0)
+    expect(templateRegistry.getAuditLogs(id)[0]?.action).toBe('revision_draft')
+  })
+
   it('会维护资产信息、试运行记录和操作日志', () => {
     const id = `registry-governance-${Date.now()}`
     const schema = createSchema(id)
@@ -220,5 +254,33 @@ describe('template registry lifecycle', () => {
     expect(templateRegistry.getEntry(id)?.schema.name).toBe('本地覆盖后的模板')
 
     localStorage.removeItem('canvas-editor:templates')
+  })
+
+  it('支持批量导入并保留失败项结果', () => {
+    const firstId = `registry-import-batch-${Date.now()}-1`
+    const secondId = `registry-import-batch-${Date.now()}-2`
+    const result = templateRegistry.importSchemas(
+      JSON.stringify([
+        createSchema(firstId),
+        {
+          ...createSchema(secondId),
+          name: '第二个导入模板'
+        },
+        {
+          id: 'invalid-template'
+        }
+      ]),
+      '批量导入'
+    )
+
+    expect(result.imported).toHaveLength(2)
+    expect(result.imported.map(item => item.mode)).toEqual([
+      'created',
+      'created'
+    ])
+    expect(result.failed).toHaveLength(1)
+    expect(result.failed[0].message).toContain('缺少必填字段')
+    expect(templateRegistry.getEntry(firstId)?.category).toBe('批量导入')
+    expect(templateRegistry.getEntry(secondId)?.schema.name).toBe('第二个导入模板')
   })
 })

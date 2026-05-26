@@ -1,6 +1,7 @@
 import {
   templateRegistry,
   type ITemplateAssetMetadata,
+  type ITemplateImportResult,
   type ITemplateListItem,
   type ITemplateRegistryEntry,
   type ITemplateReleaseNote,
@@ -71,6 +72,17 @@ export class TemplateDomainService {
     return templateRegistry.getTrialRuns(id)
   }
 
+  getLatestPublishedRecord(id: string) {
+    return templateRegistry.getLatestPublishedRecord(id)
+  }
+
+  createRevisionDraftFromPublished(id: string, operator?: string) {
+    return templateRegistry.createRevisionDraftFromPublished(id, {
+      note: '基于线上版本生成修订草稿',
+      operator
+    })
+  }
+
   addTrialRun(
     id: string,
     record: Omit<ITemplateTrialRunRecord, 'id' | 'timestamp' | 'diagnostics'> & {
@@ -118,7 +130,7 @@ export class TemplateDomainService {
     schema: ITemplateSchema,
     category: string,
     builtIn = false,
-    options?: { note?: string }
+    options?: { note?: string; operator?: string; asset?: ITemplateAssetMetadata }
   ) {
     templateRegistry.register(schema, category, builtIn, options)
   }
@@ -126,10 +138,15 @@ export class TemplateDomainService {
   importSchema(json: string, category: string) {
     return templateRegistry.importSchema(json, category)
   }
+
+  importSchemas(json: string, category: string): ITemplateImportResult {
+    return templateRegistry.importSchemas(json, category)
+  }
 }
 
 export type {
   ITemplateAssetMetadata,
+  ITemplateImportResult,
   ITemplateListItem,
   ITemplateRegistryEntry,
   ITemplateReleaseNote,

@@ -6,6 +6,7 @@ export {
   TemplateDomainService,
   type ITemplateReleaseActionResult,
   type ITemplateAssetMetadata,
+  type ITemplateImportResult,
   type ITemplateListItem,
   type ITemplateRegistryEntry,
   type ITemplateReleaseNote,

@@ -27,6 +27,11 @@ import {
   getTemplatePageDecorationPresets,
   type ITemplatePageDecorationVariableDefinition
 } from '../../editor/template/TemplatePageDecoration'
+import {
+  applyBusinessFieldQuickPreset,
+  getBusinessFieldQuickPresets,
+  recommendBusinessFieldQuickPresets
+} from '../../editor/template/TemplateFieldQuickPreset'
 import type { SelectionTarget } from './SchemaCanvas'
 
 export type PropertiesChangePhase = 'input' | 'commit'
@@ -1355,7 +1360,65 @@ export class PropertiesPanel {
     field: ITemplateField,
     onChange: (f: ITemplateField) => void
   ): HTMLDivElement {
-    const presets = el('div', 'td-props__preset-grid')
+    const wrap = el('div')
+    const createPresetGrid = (
+      items: Array<{ label: string; desc: string; onClick: () => void }>
+    ) => {
+      const grid = el('div', 'td-props__preset-grid')
+      items.forEach(item => {
+        const btn = el('button', 'td-props__preset-card')
+        btn.type = 'button'
+        const label = el('strong')
+        label.textContent = item.label
+        const desc = el('span')
+        desc.textContent = item.desc
+        btn.append(label, desc)
+        btn.addEventListener('click', item.onClick)
+        grid.append(btn)
+      })
+      return grid
+    }
+
+    const recommended = recommendBusinessFieldQuickPresets(field)
+    if (recommended.length) {
+      const recommendedTitle = el('div', 'td-props__subsection-title')
+      recommendedTitle.textContent = '智能推荐'
+      const recommendedHint = el('div', 'td-props__hint')
+      recommendedHint.textContent = `已根据字段名、标签和现有元数据推荐：${recommended.map(item => item.label).join('、')}`
+      wrap.append(
+        recommendedTitle,
+        recommendedHint,
+        createPresetGrid(
+          recommended.map(preset => ({
+            label: preset.label,
+            desc: preset.description,
+            onClick: () => onChange(applyBusinessFieldQuickPreset(field, preset))
+          }))
+        )
+      )
+    } else {
+      const recommendedHint = el('div', 'td-props__hint')
+      recommendedHint.textContent = '未命中明确的智能推荐，可直接从下方业务快配里选择。'
+      wrap.append(recommendedHint)
+    }
+
+    const businessPresetTitle = el('div', 'td-props__subsection-title')
+    businessPresetTitle.textContent = '业务字段快配'
+    wrap.append(
+      businessPresetTitle,
+      createPresetGrid(
+        getBusinessFieldQuickPresets().map(preset => ({
+          label: preset.label,
+          desc: preset.description,
+          onClick: () => onChange(applyBusinessFieldQuickPreset(field, preset))
+        }))
+      )
+    )
+
+    const genericTitle = el('div', 'td-props__subsection-title')
+    genericTitle.textContent = '通用控件快配'
+    wrap.append(genericTitle)
+
     const items: Array<{ label: string; desc: string; patch: Partial<ITemplateField> }> = [
       { label: '短文本', desc: '姓名、床号、主诊断', patch: { type: 'text', width: undefined, placeholder: '请输入' } },
       { label: '长文本', desc: '主诉、现病史、说明', patch: { type: 'textarea', width: undefined, placeholder: '请输入详细内容' } },
@@ -1364,18 +1427,12 @@ export class PropertiesPanel {
       { label: '签名', desc: '医生、患者、家属签字', patch: { type: 'signature', width: 160, placeholder: '签名' } },
       { label: '风险强调', desc: '红色加粗重点提示', patch: { style: { ...field.style, bold: true, highlight: '#fff1f0' } } }
     ]
-    items.forEach(item => {
-      const btn = el('button', 'td-props__preset-card')
-      btn.type = 'button'
-      const label = el('strong')
-      label.textContent = item.label
-      const desc = el('span')
-      desc.textContent = item.desc
-      btn.append(label, desc)
-      btn.addEventListener('click', () => onChange({ ...field, ...item.patch }))
-      presets.append(btn)
-    })
-    return card('字段快配', [presets], '按病历模板高频字段场景快速套用类型、占位和样式。')
+    wrap.append(createPresetGrid(items.map(item => ({
+      label: item.label,
+      desc: item.desc,
+      onClick: () => onChange({ ...field, ...item.patch })
+    }))))
+    return card('字段快配', [wrap], '业务字段中心和属性栏已复用同一套业务快配预设，并支持按字段名/标签智能推荐。')
   }
 
   private _renderTextStylePresets(

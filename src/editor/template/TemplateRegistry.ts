@@ -13,6 +13,7 @@ export type TemplateAuditAction =
   | 'publish'
   | 'withdraw'
   | 'rollback'
+  | 'revision_draft'
 
 export interface ITemplateAssetMetadata {
   hospitalArea?: string
@@ -86,6 +87,22 @@ export interface ITemplateRegisterOptions {
   note?: string
   operator?: string
   asset?: ITemplateAssetMetadata
+}
+
+export interface ITemplateImportRecord {
+  schema: ITemplateSchema
+  mode: 'created' | 'updated'
+}
+
+export interface ITemplateImportFailure {
+  index: number
+  name: string
+  message: string
+}
+
+export interface ITemplateImportResult {
+  imported: ITemplateImportRecord[]
+  failed: ITemplateImportFailure[]
 }
 
 const STORAGE_KEY = 'canvas-editor:templates'
@@ -414,6 +431,48 @@ class TemplateRegistry {
     return newSchema
   }
 
+  createRevisionDraftFromPublished(
+    id: string,
+    options?: { note?: string; operator?: string }
+  ): ITemplateSchema | undefined {
+    const entry = this.entries.get(id)
+    const latestPublished = this.getLatestPublishedRecord(id)
+    if (!entry || entry.builtIn || !latestPublished?.schemaSnapshot) {
+      return undefined
+    }
+
+    const now = Date.now()
+    const snapshot = JSON.parse(
+      JSON.stringify(latestPublished.schemaSnapshot)
+    ) as ITemplateSchema
+    const note = options?.note
+      ?? `基于线上版本 ${latestPublished.version} 生成修订草稿`
+    const nextEntry: ITemplateRegistryEntry = {
+      ...entry,
+      schema: snapshot,
+      status: 'draft',
+      updatedAt: now,
+      trialRuns: [],
+      versionHistory: [
+        ...entry.versionHistory,
+        {
+          status: 'draft',
+          version: snapshot.version,
+          note,
+          timestamp: now
+        }
+      ]
+    }
+    this._pushAudit(nextEntry, 'revision_draft', {
+      operator: options?.operator,
+      note,
+      detail: `从线上版本 ${latestPublished.version} 创建修订草稿并清空试运行记录`
+    })
+    this.entries.set(id, nextEntry)
+    this._persist()
+    return JSON.parse(JSON.stringify(snapshot)) as ITemplateSchema
+  }
+
   rollbackToVersion(id: string, historyIndex: number): ITemplateSchema | undefined {
     const entry = this.entries.get(id)
     if (!entry) return undefined
@@ -466,13 +525,45 @@ class TemplateRegistry {
     return schema ? JSON.stringify(schema, null, 2) : null
   }
 
-  importSchema(json: string, category: string): ITemplateSchema {
-    const schema = JSON.parse(json) as ITemplateSchema
-    if (!schema.id || !schema.name || !schema.version) {
-      throw new Error('Invalid template schema: missing required fields (id, name, version)')
+  importSchemas(json: string, category: string): ITemplateImportResult {
+    const payload = JSON.parse(json) as ITemplateSchema | ITemplateSchema[]
+    const schemaList = Array.isArray(payload) ? payload : [payload]
+    const imported: ITemplateImportRecord[] = []
+    const failed: ITemplateImportFailure[] = []
+
+    schemaList.forEach((schema, index) => {
+      const displayName = schema?.name || schema?.id || `第 ${index + 1} 项`
+      if (!schema?.id || !schema?.name || !schema?.version) {
+        failed.push({
+          index,
+          name: displayName,
+          message: '缺少必填字段（id、name、version）'
+        })
+        return
+      }
+
+      const mode = this.entries.has(schema.id) ? 'updated' : 'created'
+      this.register(schema, category, false)
+      imported.push({ schema, mode })
+    })
+
+    return {
+      imported,
+      failed
     }
-    this.register(schema, category, false)
-    return schema
+  }
+
+  importSchema(json: string, category: string): ITemplateSchema {
+    const result = this.importSchemas(json, category)
+    if (!result.imported.length) {
+      const error = result.failed[0]
+      throw new Error(
+        error
+          ? `Invalid template schema: ${error.message}`
+          : 'Invalid template schema: import payload is empty'
+      )
+    }
+    return result.imported[0].schema
   }
 
   loadFromStorage() {
