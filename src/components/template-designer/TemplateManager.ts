@@ -1,11 +1,21 @@
 import { EDITOR_COMPONENT, EditorComponent } from '../../editor'
 import {
-  templateRegistry,
+  MedicalRecordDomainService,
+  TemplateDomainService,
   type ITemplateAssetMetadata,
+  type ITemplateListItem,
+  type ITemplateRegistryEntry,
   type ITemplateReleaseNote,
   type ITemplateTrialRunRecord,
+  type ITemplateVersionRecord,
   type TemplatePublishStatus
-} from '../../editor/template/TemplateRegistry'
+} from '../../platform/emr-workbench/domain'
+import {
+  AuditCenterModule,
+  BusinessFieldCenterModule,
+  PermissionCenterModule,
+  QualityCenterModule
+} from '../../platform/emr-workbench/modules'
 import {
   TemplateDocumentStore,
   type ITemplateDocumentRecord
@@ -15,10 +25,7 @@ import {
   getResolvedTemplateBlocks,
   validateSchema
 } from '../../editor/template/index'
-import {
-  buildTemplateAdmissionReport,
-  type ITemplateAdmissionReport
-} from '../../editor/template/TemplateGovernance'
+import { type ITemplateAdmissionReport } from '../../editor/template/TemplateGovernance'
 import {
   TEMPLATE_PAGE_DECORATION_VARIABLES,
   getTemplatePageDecorationPreset,
@@ -31,12 +38,6 @@ import {
 import {
   buildTemplateFieldRuntimeIndex
 } from '../../editor/template/TemplateRuntime'
-import { templateDataAdapterRegistry } from '../../editor/template/TemplateDataAdapter'
-import type {
-  ITemplateListItem,
-  ITemplateRegistryEntry,
-  ITemplateVersionRecord
-} from '../../editor/template/TemplateRegistry'
 import { TemplateDesigner } from './TemplateDesigner'
 import { TemplateFeedback } from './TemplateFeedback'
 import { TemplatePreviewDialog } from './TemplatePreviewDialog'
@@ -330,12 +331,23 @@ export class TemplateManager {
   private sidebarEl!: HTMLDivElement
   private statsEl!: HTMLDivElement
   private bodyEl!: HTMLDivElement
-  private documentStore: TemplateDocumentStore
+  private readonly templateDomain: TemplateDomainService
+  private readonly medicalRecordDomain: MedicalRecordDomainService
+  private readonly businessFieldCenter = new BusinessFieldCenterModule()
+  private readonly permissionCenter = new PermissionCenterModule()
+  private readonly qualityCenter = new QualityCenterModule()
+  private readonly auditCenter: AuditCenterModule
 
   constructor(options: ITemplateManagerOptions) {
     this.options = options
-    this.documentStore = options.documentStore ?? new TemplateDocumentStore()
-    templateRegistry.loadFromStorage()
+    const documentStore = options.documentStore ?? new TemplateDocumentStore()
+    this.medicalRecordDomain = new MedicalRecordDomainService(documentStore)
+    this.templateDomain = new TemplateDomainService(documentStore)
+    this.auditCenter = new AuditCenterModule(
+      this.templateDomain,
+      this.medicalRecordDomain
+    )
+    this.templateDomain.loadFromStorage()
     this._lockRootScroll()
     const { mask, container } = this._render()
     this.mask = mask
@@ -513,7 +525,7 @@ export class TemplateManager {
   private _renderSidebar() {
     this.sidebarEl.innerHTML = ''
     const allItems = this._getWorkbenchItems(false)
-    const categories = ['全部', ...templateRegistry.getCategories()]
+    const categories = ['全部', ...this.templateDomain.getCategories()]
     this.sidebarEl.append(
       this._createSidebarSection(
         '分类',
@@ -530,7 +542,7 @@ export class TemplateManager {
         }))
       ),
       this._createSidebarSection(
-        '流程',
+        '状态',
         [
           { value: 'all', label: '全部状态', count: allItems.length },
           {
@@ -564,7 +576,7 @@ export class TemplateManager {
         }))
       ),
       this._createSidebarSection(
-        '运营视图',
+        '视角',
         [
           { value: 'all', label: '全部模板', count: allItems.length },
           {
@@ -698,16 +710,15 @@ export class TemplateManager {
   }
 
   private _getWorkbenchItems(applyFilter = true): ITemplateWorkbenchItem[] {
-    const documents = this.documentStore.list()
-    let items = templateRegistry.getAll()
+    let items = this.templateDomain.getAll()
       .map(item => {
-        const entry = templateRegistry.getEntry(item.id)
+        const entry = this.templateDomain.getEntry(item.id)
         if (!entry) return null
         return {
           ...item,
           entry,
           ...getTemplateMetrics(entry.schema),
-          admissionReport: buildTemplateAdmissionReport(entry, { documents })
+          admissionReport: this.templateDomain.buildAdmissionReport(entry)
         }
       })
       .filter(Boolean) as ITemplateWorkbenchItem[]
@@ -855,8 +866,7 @@ export class TemplateManager {
     btn.addEventListener('click', e => {
       e.stopPropagation()
       if (item.entry.status === 'published') {
-        const record = this.documentStore.create({
-          schema: item.entry.schema,
+        const record = this.medicalRecordDomain.createFromTemplate(item.entry.schema, {
           templateStatus: item.entry.status,
           title: item.entry.schema.name,
           flatValues: {},
@@ -1067,7 +1077,7 @@ export class TemplateManager {
               applicableRoles: roles.value.split(/[、,，]/).map(role => role.trim()).filter(Boolean),
               scenario: scenario.value.trim()
             }
-            templateRegistry.updateAssetMetadata(item.id, nextAsset, '模板管理员')
+            this.templateDomain.updateAssetMetadata(item.id, nextAsset, '模板管理员')
             this._refreshWorkbench()
             TemplateFeedback.toast('资产信息已保存', 'success')
           }
@@ -1113,7 +1123,7 @@ export class TemplateManager {
 
     const history = document.createElement('div')
     history.className = 'tm-trial-history'
-    this._renderTrialRuns(templateRegistry.getTrialRuns(item.id)).forEach(row => history.append(row))
+    this._renderTrialRuns(this.templateDomain.getTrialRuns(item.id)).forEach(row => history.append(row))
     content.append(history)
 
     TemplateFeedback.openDialog({
@@ -1130,7 +1140,7 @@ export class TemplateManager {
           label: '保存验证结果',
           variant: 'primary',
           onClick: () => {
-            templateRegistry.addTrialRun(item.id, {
+            this.templateDomain.addTrialRun(item.id, {
               scenario: scenario.value,
               patientId: patientId.value.trim(),
               department: department.value.trim(),
@@ -1169,7 +1179,7 @@ export class TemplateManager {
   }
 
   private _openClinicalImpact(item: ITemplateWorkbenchItem) {
-    const documents = this.documentStore.list().filter(record => record.template.id === item.id)
+    const documents = this.medicalRecordDomain.listByTemplate(item.id)
     const content = document.createElement('div')
     content.className = 'tm-version-center'
     const summary = document.createElement('div')
@@ -1209,7 +1219,7 @@ export class TemplateManager {
   }
 
   private _openDocumentTrace(item: ITemplateWorkbenchItem) {
-    const documents = this.documentStore.list().filter(record => record.template.id === item.id)
+    const documents = this.medicalRecordDomain.listByTemplate(item.id)
     const content = document.createElement('div')
     content.className = 'tm-version-center'
     const summary = document.createElement('div')
@@ -1234,7 +1244,7 @@ export class TemplateManager {
       title.className = 'tm-trace-group__title'
       title.textContent = `${record.title || record.id} · v${record.template.version}`
       group.append(title)
-      this.documentStore.getTraceTimeline(record.id).slice(0, 6).forEach(event => {
+      this.medicalRecordDomain.getTraceTimeline(record.id).slice(0, 6).forEach(event => {
         const row = document.createElement('div')
         row.className = 'tm-version-center__record'
         const action = document.createElement('span')
@@ -1261,7 +1271,7 @@ export class TemplateManager {
   private _openAuditLog(item: ITemplateWorkbenchItem) {
     const content = document.createElement('div')
     content.className = 'tm-version-center'
-    const records = templateRegistry.getAuditLogs(item.id)
+    const records = this.templateDomain.getAuditLogs(item.id)
     if (!records.length) {
       const empty = document.createElement('div')
       empty.className = 'tm-empty'
@@ -1318,10 +1328,7 @@ export class TemplateManager {
   }
 
   private _getPublishedVersion(entry: ITemplateRegistryEntry): string {
-    const record = entry.versionHistory
-      .filter(item => item.status === 'published')
-      .at(-1)
-    return record ? `v${record.version}` : ''
+    return this.templateDomain.getPublishedVersion(entry)
   }
 
   private _renderVersionRecord(record: ITemplateVersionRecord): HTMLDivElement {
@@ -1417,26 +1424,18 @@ export class TemplateManager {
     item: ITemplateWorkbenchItem,
     releaseNote: ITemplateReleaseNote
   ) {
-    if (status !== 'archived' && item.admissionReport.blockerCount > 0) {
+    const result = this.templateDomain.runReleaseAction(
+      status,
+      item.id,
+      item.admissionReport,
+      releaseNote
+    )
+    if (!result.applied) {
       TemplateFeedback.alert({
-        title: '发布准入未通过',
-        message: item.admissionReport.issues
-          .filter(issue => issue.level === 'blocker')
-          .map(issue => issue.message)
-          .join('；'),
-        tone: 'warning'
-      })
-      return
-    }
-    const errors = status === 'review'
-      ? templateRegistry.submitForReview(item.id, releaseNote)
-      : status === 'published'
-        ? templateRegistry.publish(item.id, releaseNote)
-        : templateRegistry.withdraw(item.id)
-    if (errors.length) {
-      TemplateFeedback.alert({
-        title: '发版检查未通过',
-        message: errors.join('；'),
+        title: item.admissionReport.blockerCount && status !== 'archived'
+          ? '发布准入未通过'
+          : '发版检查未通过',
+        message: result.errors.join('；'),
         tone: 'warning'
       })
       return
@@ -1446,9 +1445,7 @@ export class TemplateManager {
   }
 
   private async _deleteTemplate(item: ITemplateWorkbenchItem) {
-    const boundDocumentCount = this.documentStore.list()
-      .filter(record => record.template.id === item.id)
-      .length
+    const boundDocumentCount = this.medicalRecordDomain.getBoundDocumentCount(item.id)
     const confirmed = await TemplateFeedback.confirm({
       title: '删除模板',
       message: boundDocumentCount
@@ -1458,7 +1455,7 @@ export class TemplateManager {
       confirmText: '删除'
     })
     if (!confirmed) return
-    templateRegistry.delete(item.id)
+    this.templateDomain.delete(item.id)
     TemplateFeedback.toast('模板已删除', 'success')
     this._refreshWorkbench()
   }
@@ -1479,94 +1476,87 @@ export class TemplateManager {
     exportBtn.type = 'button'
     exportBtn.addEventListener('click', () => this._exportJSON())
 
-    const ruleBtn = document.createElement('button')
-    ruleBtn.className = 'td-designer__btn'
-    ruleBtn.textContent = '规则中心'
-    ruleBtn.type = 'button'
-    ruleBtn.addEventListener('click', () => this._openRuleCenter())
-
     const businessBtn = document.createElement('button')
     businessBtn.className = 'td-designer__btn'
     businessBtn.textContent = '业务字段中心'
     businessBtn.type = 'button'
     businessBtn.addEventListener('click', () => this._openBusinessFieldCenter())
 
-    footer.append(importBtn, exportBtn, ruleBtn, businessBtn)
+    const permissionBtn = document.createElement('button')
+    permissionBtn.className = 'td-designer__btn'
+    permissionBtn.textContent = '权限中心'
+    permissionBtn.type = 'button'
+    permissionBtn.addEventListener('click', () => this._openPermissionCenter())
+
+    const qualityBtn = document.createElement('button')
+    qualityBtn.className = 'td-designer__btn'
+    qualityBtn.textContent = '质控中心'
+    qualityBtn.type = 'button'
+    qualityBtn.addEventListener('click', () => this._openQualityCenter())
+
+    const auditBtn = document.createElement('button')
+    auditBtn.className = 'td-designer__btn'
+    auditBtn.textContent = '审计中心'
+    auditBtn.type = 'button'
+    auditBtn.addEventListener('click', () => this._openAuditCenter())
+
+    footer.append(
+      importBtn,
+      exportBtn,
+      businessBtn,
+      permissionBtn,
+      qualityBtn,
+      auditBtn
+    )
     return footer
   }
 
-  private _openRuleCenter() {
-    const items = this._getWorkbenchItems()
-    const content = document.createElement('div')
-    content.className = 'tm-version-center'
-    const summary = document.createElement('div')
-    summary.className = 'tm-version-center__summary'
-    summary.innerHTML = `
-      <div><span>当前模板</span><strong>${items.length}</strong></div>
-      <div><span>规则总数</span><strong>${items.reduce((sum, item) => sum + item.ruleCount, 0)}</strong></div>
-      <div><span>待修正模板</span><strong>${items.filter(item => item.issueCount > 0).length}</strong></div>
-    `
-    content.append(summary)
+  private _openPermissionCenter() {
+    const content = this.permissionCenter.createDialogContent()
     TemplateFeedback.openDialog({
-      title: '规则中心',
+      title: '权限中心',
       content,
-      width: 560,
+      width: 640,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private _openQualityCenter() {
+    const content = this.qualityCenter.createDialogContent({
+      items: this._getWorkbenchItems(false),
+      medicalRecordDomain: this.medicalRecordDomain
+    })
+    TemplateFeedback.openDialog({
+      title: '质控中心',
+      content,
+      width: 680,
       actions: [{ label: '关闭', variant: 'primary' }]
     })
   }
 
   private _openBusinessFieldCenter() {
-    const items = this._getWorkbenchItems(false)
-    const totalFields = items.reduce((sum, item) => sum + item.fieldCount, 0)
-    const totalBusinessFields = items.reduce((sum, item) => sum + item.businessFieldCount, 0)
-    const averageCoverage = items.length
-      ? Math.round(items.reduce((sum, item) => sum + item.admissionReport.dataBindingCoverage, 0) / items.length)
-      : 100
-    const content = document.createElement('div')
-    content.className = 'tm-version-center'
-    const summary = document.createElement('div')
-    summary.className = 'tm-version-center__summary'
-    summary.innerHTML = `
-      <div><span>适配器</span><strong>${templateDataAdapterRegistry.list().length}</strong></div>
-      <div><span>业务字段</span><strong>${totalBusinessFields}/${totalFields}</strong></div>
-      <div><span>平均覆盖</span><strong>${averageCoverage}%</strong></div>
-      <div><span>数据源</span><strong>${items.reduce((sum, item) => sum + item.dataSourceCount, 0)}</strong></div>
-    `
-    content.append(summary)
-    templateDataAdapterRegistry.list().forEach(adapter => {
-      const item = document.createElement('div')
-      item.className = 'tm-adapter-card'
-      const name = document.createElement('div')
-      name.className = 'tm-adapter-card__name'
-      name.textContent = adapter.label
-      const sources = document.createElement('div')
-      sources.className = 'tm-adapter-card__sources'
-      sources.textContent = adapter.dataSources.join(' / ')
-      item.append(name, sources)
-      content.append(item)
+    const content = this.businessFieldCenter.createDialogContent({
+      items: this._getWorkbenchItems(false),
+      adapters: this.templateDomain.listDataAdapters()
     })
-    const riskList = document.createElement('div')
-    riskList.className = 'tm-admission-report__list'
-    items
-      .filter(item => item.admissionReport.issues.some(issue => issue.category === 'dataBinding'))
-      .slice(0, 8)
-      .forEach(item => {
-        const row = document.createElement('div')
-        row.className = 'tm-admission-report__item tm-admission-report__item--warning'
-        const badge = document.createElement('span')
-        badge.textContent = `${item.admissionReport.dataBindingCoverage}%`
-        const name = document.createElement('strong')
-        name.textContent = item.name
-        const detail = document.createElement('small')
-        detail.textContent = `${item.admissionReport.issues.filter(issue => issue.category === 'dataBinding').length} 个绑定问题`
-        row.append(badge, name, detail)
-        riskList.append(row)
-      })
-    if (riskList.childElementCount) content.append(riskList)
+
     TemplateFeedback.openDialog({
       title: '业务字段中心',
       content,
       width: 620,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private _openAuditCenter() {
+    const content = this.auditCenter.createDialogContent(
+      this._getWorkbenchItems(false)
+    )
+
+    TemplateFeedback.openDialog({
+      title: '审计中心',
+      content,
+      width: 720,
       actions: [{ label: '关闭', variant: 'primary' }]
     })
   }
@@ -1806,7 +1796,7 @@ export class TemplateManager {
               ...schema,
               layout
             }
-            templateRegistry.register(
+            this.templateDomain.register(
               nextSchema,
               item.entry.category,
               false,
@@ -1832,7 +1822,7 @@ export class TemplateManager {
     const designer = new TemplateDesigner(
       {
         onSave: (saved, category) => {
-          templateRegistry.register(
+          this.templateDomain.register(
             saved,
             category || (this.activeCategory === '全部' ? '自定义' : this.activeCategory),
             false
@@ -1859,7 +1849,7 @@ export class TemplateManager {
       reader.onload = e => {
         try {
           const json = e.target?.result as string
-          const schema = templateRegistry.importSchema(json, '自定义')
+          const schema = this.templateDomain.importSchema(json, '自定义')
           TemplateFeedback.toast(`导入成功：${schema.name}`, 'success')
           this._refreshWorkbench()
         } catch (err) {
