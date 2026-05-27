@@ -1,25 +1,34 @@
 import { EDITOR_COMPONENT, EditorComponent } from '../../editor'
 import {
+  MedicalRecordDefectDomainService,
   MedicalRecordDomainService,
   TemplateDomainService,
   type ITemplateAssetMetadata,
   type ITemplateListItem,
   type ITemplateRegistryEntry,
   type ITemplateReleaseNote,
-  type ITemplateTrialRunRecord,
   type ITemplateVersionRecord,
   type TemplatePublishStatus
 } from '../../platform/emr-workbench/domain'
 import {
   applyBusinessFieldQuickPreset,
+  AdmissionCenterModule,
   AuditCenterModule,
   BusinessFieldCenterModule,
+  buildMedicalRecordQualityViewModel,
   getBusinessFieldQuickPresets,
+  MedicalRecordArchiveCenterModule,
+  buildMedicalRecordArchiveCenterViewModel,
+  MedicalRecordDefectCenterModule,
+  MedicalRecordOperationsCenterModule,
+  MedicalRecordQualityCenterModule,
+  MigrationPreviewCenterModule,
   recommendBusinessFieldQuickPresets,
   type IBusinessFieldCenterFieldAsset,
   type IBusinessFieldQuickPreset,
   PermissionCenterModule,
-  QualityCenterModule
+  QualityCenterModule,
+  TrialRunCenterModule
 } from '../../platform/emr-workbench/modules'
 import {
   TemplateDocumentStore,
@@ -55,6 +64,9 @@ import { TemplatePreviewDialog } from './TemplatePreviewDialog'
 export interface ITemplateManagerOptions {
   onApply: (schema: ITemplateSchema, record?: ITemplateDocumentRecord) => void
   documentStore?: TemplateDocumentStore
+  mode?: 'dialog' | 'page'
+  host?: HTMLElement
+  onClose?: () => void
 }
 
 type TemplateStatusFilter = TemplatePublishStatus | 'all' | 'problem'
@@ -642,11 +654,13 @@ function updateTemplateFieldMetadata(
 }
 
 export class TemplateManager {
-  private mask: HTMLDivElement
+  private mask: HTMLDivElement | null = null
   private container: HTMLDivElement
   private options: ITemplateManagerOptions
+  private readonly mode: 'dialog' | 'page'
   private previousBodyOverflow = ''
   private previousHtmlOverflow = ''
+  private isDisposed = false
   private activeCategory = '全部'
   private statusFilter: TemplateStatusFilter = 'all'
   private viewMode: TemplateViewMode = 'card'
@@ -663,22 +677,36 @@ export class TemplateManager {
   private bodyEl!: HTMLDivElement
   private readonly templateDomain: TemplateDomainService
   private readonly medicalRecordDomain: MedicalRecordDomainService
+  private readonly medicalRecordDefectDomain: MedicalRecordDefectDomainService
   private readonly businessFieldCenter = new BusinessFieldCenterModule()
+  private readonly admissionCenter = new AdmissionCenterModule()
+  private readonly trialRunCenter = new TrialRunCenterModule()
+  private readonly migrationPreviewCenter = new MigrationPreviewCenterModule()
+  private readonly medicalRecordArchiveCenter = new MedicalRecordArchiveCenterModule()
+  private readonly medicalRecordDefectCenter = new MedicalRecordDefectCenterModule()
+  private readonly medicalRecordOperationsCenter = new MedicalRecordOperationsCenterModule()
+  private readonly medicalRecordQualityCenter = new MedicalRecordQualityCenterModule()
   private readonly permissionCenter = new PermissionCenterModule()
   private readonly qualityCenter = new QualityCenterModule()
   private readonly auditCenter: AuditCenterModule
 
   constructor(options: ITemplateManagerOptions) {
     this.options = options
+    this.mode = options.mode ?? 'dialog'
     const documentStore = options.documentStore ?? new TemplateDocumentStore()
     this.medicalRecordDomain = new MedicalRecordDomainService(documentStore)
+    this.medicalRecordDefectDomain = new MedicalRecordDefectDomainService(
+      this.medicalRecordDomain
+    )
     this.templateDomain = new TemplateDomainService(documentStore)
     this.auditCenter = new AuditCenterModule(
       this.templateDomain,
       this.medicalRecordDomain
     )
     this.templateDomain.loadFromStorage()
-    this._lockRootScroll()
+    if (this.mode === 'dialog') {
+      this._lockRootScroll()
+    }
     const { mask, container } = this._render()
     this.mask = mask
     this.container = container
@@ -697,6 +725,20 @@ export class TemplateManager {
   }
 
   private _render() {
+    if (this.mode === 'page') {
+      const host = this.options.host ?? document.body
+      const page = document.createElement('div')
+      page.className = 'tm-page'
+      page.setAttribute(EDITOR_COMPONENT, EditorComponent.COMPONENT)
+      page.append(this._renderHeader(), this._renderWorkbench(), this._renderFooter())
+      host.append(page)
+      this._refreshWorkbench()
+      return {
+        mask: null,
+        container: page
+      }
+    }
+
     const mask = document.createElement('div')
     mask.className = 'td-mask'
     mask.setAttribute(EDITOR_COMPONENT, EditorComponent.COMPONENT)
@@ -719,6 +761,9 @@ export class TemplateManager {
   private _renderHeader(): HTMLDivElement {
     const header = document.createElement('div')
     header.className = 'tm-header tm-header--workbench'
+    if (this.mode === 'page') {
+      header.classList.add('tm-header--page')
+    }
 
     const titleWrap = document.createElement('div')
     titleWrap.className = 'tm-header__title-wrap'
@@ -736,6 +781,54 @@ export class TemplateManager {
     const actions = document.createElement('div')
     actions.className = 'tm-header__actions'
 
+    const permissionBtn = document.createElement('button')
+    permissionBtn.className = 'td-designer__btn td-designer__btn--ghost'
+    permissionBtn.textContent = '权限中心'
+    permissionBtn.type = 'button'
+    permissionBtn.addEventListener('click', () => this._openPermissionCenter())
+
+    const qualityBtn = document.createElement('button')
+    qualityBtn.className = 'td-designer__btn td-designer__btn--ghost'
+    qualityBtn.textContent = '模板质控'
+    qualityBtn.type = 'button'
+    qualityBtn.addEventListener('click', () => this._openQualityCenter())
+
+    const recordQualityBtn = document.createElement('button')
+    recordQualityBtn.className = 'td-designer__btn td-designer__btn--ghost'
+    recordQualityBtn.textContent = '病历质控'
+    recordQualityBtn.type = 'button'
+    recordQualityBtn.addEventListener('click', () => this._openMedicalRecordQualityCenter())
+
+    const operationsBtn = document.createElement('button')
+    operationsBtn.className = 'td-designer__btn td-designer__btn--ghost'
+    operationsBtn.textContent = '运营闭环'
+    operationsBtn.type = 'button'
+    operationsBtn.addEventListener('click', () => this._openMedicalRecordOperationsCenter())
+
+    const archiveBtn = document.createElement('button')
+    archiveBtn.className = 'td-designer__btn td-designer__btn--ghost'
+    archiveBtn.textContent = '归档质检'
+    archiveBtn.type = 'button'
+    archiveBtn.addEventListener('click', () => this._openMedicalRecordArchiveCenter())
+
+    const defectBtn = document.createElement('button')
+    defectBtn.className = 'td-designer__btn td-designer__btn--ghost'
+    defectBtn.textContent = '缺陷整改'
+    defectBtn.type = 'button'
+    defectBtn.addEventListener('click', () => this._openMedicalRecordDefectCenter())
+
+    const businessFieldBtn = document.createElement('button')
+    businessFieldBtn.className = 'td-designer__btn td-designer__btn--ghost'
+    businessFieldBtn.textContent = '业务字段中心'
+    businessFieldBtn.type = 'button'
+    businessFieldBtn.addEventListener('click', () => this._openBusinessFieldCenter())
+
+    const auditBtn = document.createElement('button')
+    auditBtn.className = 'td-designer__btn td-designer__btn--ghost'
+    auditBtn.textContent = '审计中心'
+    auditBtn.type = 'button'
+    auditBtn.addEventListener('click', () => this._openAuditCenter())
+
     const newBtn = document.createElement('button')
     newBtn.className = 'td-designer__btn td-designer__btn--primary'
     newBtn.textContent = '+ 新建模板'
@@ -744,11 +837,27 @@ export class TemplateManager {
 
     const closeBtn = document.createElement('button')
     closeBtn.className = 'tm-header__close'
-    closeBtn.textContent = '×'
+    if (this.mode === 'page') {
+      closeBtn.className = 'td-designer__btn td-designer__btn--ghost tm-header__close tm-header__close--page'
+      closeBtn.textContent = '返回编辑器'
+    } else {
+      closeBtn.textContent = '×'
+    }
     closeBtn.type = 'button'
     closeBtn.addEventListener('click', () => this._dispose())
 
-    actions.append(newBtn, closeBtn)
+    actions.append(
+      permissionBtn,
+      qualityBtn,
+      recordQualityBtn,
+      operationsBtn,
+      archiveBtn,
+      defectBtn,
+      businessFieldBtn,
+      auditBtn,
+      newBtn,
+      closeBtn
+    )
     header.append(titleWrap, actions)
     return header
   }
@@ -1108,19 +1217,101 @@ export class TemplateManager {
   private _renderBody() {
     this.bodyEl.innerHTML = ''
     const items = this._getWorkbenchItems()
+    const allItems = this._getWorkbenchItems(false)
 
     if (items.length === 0) {
-      const empty = document.createElement('div')
-      empty.className = 'tm-empty'
-      empty.textContent = '没有匹配的模板，可调整筛选条件或新建模板'
-      this.bodyEl.append(empty)
+      this.bodyEl.append(this._renderWorkbenchEmptyState(allItems.length))
       return
+    }
+
+    const notice = this._renderWorkbenchStatusNotice(items)
+    if (notice) {
+      this.bodyEl.append(notice)
     }
 
     const grid = document.createElement('div')
     grid.className = this.viewMode === 'card' ? 'tm-grid' : 'tm-list'
     items.forEach(item => grid.append(this._renderCard(item)))
     this.bodyEl.append(grid)
+  }
+
+  private _renderWorkbenchEmptyState(totalCount: number): HTMLDivElement {
+    const empty = document.createElement('div')
+    empty.className = 'tm-empty'
+
+    const title = document.createElement('strong')
+    title.className = 'tm-empty__title'
+    const detail = document.createElement('p')
+    detail.className = 'tm-empty__detail'
+    const actions = document.createElement('div')
+    actions.className = 'tm-empty__actions'
+
+    const tips: string[] = []
+    if (totalCount === 0) {
+      title.textContent = '当前还没有模板资产'
+      detail.textContent = '可以先新建一个模板草稿，再进入编辑、试运行和发布闭环。'
+      tips.push('下一步：新建模板，先补基础字段和页眉页脚。')
+      tips.push('下一步：进入测试中心做试运行验证，确认必填项和数据绑定。')
+      tips.push('下一步：通过发布准入后再送审或发布。')
+    } else {
+      title.textContent = '当前筛选条件下没有匹配结果'
+      detail.textContent = '模板资产存在，但当前分类、状态或运营筛选条件把结果收窄空了。'
+      tips.push('下一步：放宽科室、文书类型、负责人或最近使用筛选条件。')
+      if (this.riskFilter !== 'all' || this.statusFilter === 'problem') {
+        tips.push('下一步：若要修复异常模板，可先切到“有风险 / 待确认 / 准入阻断”继续排查。')
+      } else {
+        tips.push('下一步：切到已发布、草稿或最近使用视角，快速找到目标模板。')
+      }
+      tips.push('下一步：若确定当前分类暂无模板，可直接新建模板开始配置。')
+    }
+
+    tips.forEach(text => {
+      const tag = document.createElement('span')
+      tag.className = 'tm-empty__tip'
+      tag.textContent = text
+      actions.append(tag)
+    })
+
+    empty.append(title, detail, actions)
+    return empty
+  }
+
+  private _renderWorkbenchStatusNotice(
+    items: ITemplateWorkbenchItem[]
+  ): HTMLDivElement | null {
+    const blockedCount = items.filter(item => item.admissionReport.status === 'blocked').length
+    const warningCount = items.filter(item => item.admissionReport.status === 'warning').length
+    const untestedCount = items.filter(item => item.entry.trialRuns.length === 0).length
+    const unpublishedCount = items.filter(item => item.entry.status !== 'published').length
+
+    let title = ''
+    let detail = ''
+    let tone: 'warning' | 'danger' | 'success' = 'success'
+
+    if (blockedCount > 0) {
+      title = `当前结果中有 ${blockedCount} 个模板存在发布阻断项`
+      detail = '下一步：先进入“准入报告”或“编辑”修复字段、规则、数据绑定和页眉页脚问题，再重新试运行并发版。'
+      tone = 'danger'
+    } else if (warningCount > 0) {
+      title = `当前结果中有 ${warningCount} 个模板处于待确认状态`
+      detail = '下一步：先进入试运行验证补齐测试结论，再到发版流程确认警告项是否可接受。'
+      tone = 'warning'
+    } else if (untestedCount > 0 || unpublishedCount > 0) {
+      title = '当前结果以内测/草稿模板为主'
+      detail = '下一步：先编辑并保存改动，再进入试运行验证；验证通过后可在发版流程里送审或发布。'
+      tone = 'success'
+    } else {
+      return null
+    }
+
+    const notice = document.createElement('div')
+    notice.className = `tm-workbench-notice tm-workbench-notice--${tone}`
+    const noticeTitle = document.createElement('strong')
+    noticeTitle.textContent = title
+    const noticeDetail = document.createElement('span')
+    noticeDetail.textContent = detail
+    notice.append(noticeTitle, noticeDetail)
+    return notice
   }
 
   private _getWorkbenchItems(applyFilter = true): ITemplateWorkbenchItem[] {
@@ -1470,15 +1661,11 @@ export class TemplateManager {
   private _openAdmissionReport(item: ITemplateWorkbenchItem) {
     TemplateFeedback.openDialog({
       title: `${item.name} · 发布准入报告`,
-      content: this._renderAdmissionReport(item.admissionReport),
+      content: this.admissionCenter.createReportView(item.admissionReport, {
+        onOpenDesigner: () => this._openDesigner(item.entry)
+      }),
       width: 760,
-      actions: [
-        {
-          label: '进入设计器修复',
-          onClick: () => this._openDesigner(item.entry)
-        },
-        { label: '关闭', variant: 'primary' }
-      ]
+      actions: [{ label: '关闭', variant: 'primary' }]
     })
   }
 
@@ -1532,94 +1719,20 @@ export class TemplateManager {
   }
 
   private _openTrialRun(item: ITemplateWorkbenchItem) {
-    const content = document.createElement('div')
-    content.className = 'tm-governance-form'
-    const scenario = document.createElement('select')
-    scenario.className = 'tm-select tm-governance-form__input'
-    ;['住院入院记录', '门诊病历', '手术记录', '护理记录', '知情同意'].forEach(label => {
-      const option = document.createElement('option')
-      option.value = label
-      option.textContent = label
-      scenario.append(option)
-    })
-    const patientId = this._createTextInput('P-1001', '测试患者 ID')
-    const department = this._createTextInput(item.entry.asset?.department, '测试科室')
-    const status = document.createElement('select')
-    status.className = 'tm-select tm-governance-form__input'
-    ;([
-      { label: '通过', value: 'passed' },
-      { label: '失败', value: 'failed' }
-    ]).forEach(item => {
-      const option = document.createElement('option')
-      option.value = item.value
-      option.textContent = item.label
-      status.append(option)
-    })
-    const summary = document.createElement('textarea')
-    summary.className = 'tm-release-flow__note'
-    summary.placeholder = '记录本次试运行的输入、规则触发、导出结果或待修复问题'
-    content.append(
-      this._createGovernanceRow('测试场景', scenario),
-      this._createGovernanceRow('测试患者', patientId),
-      this._createGovernanceRow('测试科室', department),
-      this._createGovernanceRow('验证结果', status),
-      this._createGovernanceRow('验证说明', summary)
-    )
-
-    const history = document.createElement('div')
-    history.className = 'tm-trial-history'
-    this._renderTrialRuns(this.templateDomain.getTrialRuns(item.id)).forEach(row => history.append(row))
-    content.append(history)
-
     TemplateFeedback.openDialog({
       title: `${item.name} · 试运行验证`,
-      content,
-      width: 640,
-      actions: [
-        {
-          label: '打开预览',
-          closeOnClick: false,
-          onClick: () => new TemplatePreviewDialog(item.entry.schema)
-        },
-        {
-          label: '保存验证结果',
-          variant: 'primary',
-          onClick: () => {
-            this.templateDomain.addTrialRun(item.id, {
-              scenario: scenario.value,
-              patientId: patientId.value.trim(),
-              department: department.value.trim(),
-              status: status.value as ITemplateTrialRunRecord['status'],
-              summary: summary.value.trim() || '试运行验证已完成'
-            }, '模板管理员')
-            this._refreshWorkbench()
-            TemplateFeedback.toast('试运行结果已保存', 'success')
-          }
+      content: this.trialRunCenter.createDialogContent({
+        defaultDepartment: item.entry.asset?.department,
+        getRecords: () => this.templateDomain.getTrialRuns(item.id),
+        onOpenPreview: () => new TemplatePreviewDialog(item.entry.schema),
+        onSave: draft => {
+          this.templateDomain.addTrialRun(item.id, draft, '模板管理员')
+          this._refreshWorkbench()
+          TemplateFeedback.toast('试运行结果已保存', 'success')
         }
-      ]
-    })
-  }
-
-  private _renderTrialRuns(records: ITemplateTrialRunRecord[]): HTMLDivElement[] {
-    if (!records.length) {
-      const empty = document.createElement('div')
-      empty.className = 'tm-empty'
-      empty.textContent = '暂无试运行记录'
-      return [empty]
-    }
-    return records.slice(0, 4).map(record => {
-      const row = document.createElement('div')
-      row.className = 'tm-version-center__record'
-      const status = document.createElement('span')
-      status.textContent = record.status === 'passed' ? '通过' : '失败'
-      const scenario = document.createElement('strong')
-      scenario.textContent = record.scenario
-      const note = document.createElement('em')
-      note.textContent = record.summary || '无验证说明'
-      const time = document.createElement('small')
-      time.textContent = formatTime(record.timestamp)
-      row.append(status, scenario, note, time)
-      return row
+      }),
+      width: 640,
+      actions: [{ label: '关闭', variant: 'primary' }]
     })
   }
 
@@ -1664,229 +1777,16 @@ export class TemplateManager {
   }
 
   private _openMigrationPreview(item: ITemplateWorkbenchItem) {
-    type IMigrationPreviewReportItem = {
-      record: ReturnType<MedicalRecordDomainService['listByTemplate']>[number]
-      preview: NonNullable<ReturnType<MedicalRecordDomainService['previewMigration']>>
-      previousRuleCount: number
-      nextRuleCount: number
-      mappingText: string
-      requiredText: string
-      droppedText: string
-      ambiguousText: string
-      status: {
-        badgeClass: string
-        badgeText: string
-      }
-    }
-
-    const documents = this.medicalRecordDomain.listByTemplate(item.id)
-    const outdatedDocuments = documents.filter(
-      record => record.template.version !== item.entry.schema.version
-    )
-    const targetDocuments = outdatedDocuments.length ? outdatedDocuments : documents
-    const content = document.createElement('div')
-    content.className = 'tm-version-center'
-
-    const previews: IMigrationPreviewReportItem[] = targetDocuments
-      .map(record => {
-        const preview = this.medicalRecordDomain.previewMigration(
-          record.id,
-          item.entry.schema
-        )
-        if (!preview) return null
-
-        const sourceIndex = buildTemplateFieldRuntimeIndex(record.template.snapshot)
-        const targetIndex = buildTemplateFieldRuntimeIndex(item.entry.schema)
-        const previousRuleCount = countRules(record.template.snapshot.blocks)
-        const nextRuleCount = countRules(item.entry.schema.blocks)
-        const requiredIssues = preview.unresolvedFields.filter(
-          field => field.reason === 'required'
-        )
-        const ambiguousIssues = preview.unresolvedFields.filter(
-          field => field.reason === 'ambiguous'
-        )
-
-        const summarize = (values: string[], emptyText = '无') => {
-          if (!values.length) return emptyText
-          const limited = values.slice(0, 3)
-          return values.length > 3
-            ? `${limited.join('、')} 等 ${values.length} 项`
-            : limited.join('、')
-        }
-
-        const mappingText = summarize(
-          preview.mappings.map(mapping => {
-            const sourceLabel =
-              sourceIndex.byId.get(mapping.fromFieldId)?.field.label
-              || mapping.fromFieldId
-            const targetLabel =
-              targetIndex.byId.get(mapping.toFieldId)?.field.label
-              || mapping.toFieldId
-            return `${sourceLabel}→${targetLabel}`
-          })
-        )
-
-        const requiredText = summarize(
-          requiredIssues.map(field => field.label || field.fieldId)
-        )
-        const droppedText = summarize(
-          preview.droppedFields.map(field => field.label || field.fieldId)
-        )
-        const ambiguousText = summarize(
-          ambiguousIssues.map(field => field.label || field.fieldId)
-        )
-
-        const status = !preview.canAutoApply
-          ? {
-              badgeClass: 'tm-center-badge tm-center-badge--danger',
-              badgeText: '新增必填阻断'
-            }
-          : preview.requiresManualConfirmation
-            ? {
-                badgeClass: 'tm-center-badge tm-center-badge--warning',
-                badgeText: '需人工确认'
-              }
-            : {
-                badgeClass: 'tm-center-badge tm-center-badge--success',
-                badgeText: '可直接迁移'
-              }
-
-        return {
-          record,
-          preview,
-          previousRuleCount,
-          nextRuleCount,
-          mappingText,
-          requiredText,
-          droppedText,
-          ambiguousText,
-          status
-        }
-      })
-      .filter(
-        (
-          previewItem
-        ): previewItem is IMigrationPreviewReportItem => previewItem !== null
-      )
-
-    const autoApplyCount = previews.filter(
-      item => item.preview.canAutoApply && !item.preview.requiresManualConfirmation
-    ).length
-    const manualConfirmCount = previews.filter(
-      item => item.preview.canAutoApply && item.preview.requiresManualConfirmation
-    ).length
-    const blockedCount = previews.filter(item => !item.preview.canAutoApply).length
-
-    const summary = document.createElement('div')
-    summary.className = 'tm-version-center__summary'
-    summary.innerHTML = `
-      <div><span>引用病历</span><strong>${documents.length}</strong></div>
-      <div><span>待升级病历</span><strong>${outdatedDocuments.length}</strong></div>
-      <div><span>可直接迁移</span><strong>${autoApplyCount}</strong></div>
-      <div><span>需确认 / 阻断</span><strong>${manualConfirmCount}/${blockedCount}</strong></div>
-    `
-    content.append(summary)
-
-    if (!documents.length) {
-      const empty = document.createElement('div')
-      empty.className = 'tm-empty'
-      empty.textContent = '当前模板还没有引用病历，待生成病历实例后即可查看迁移预览。'
-      content.append(empty)
-    } else {
-      const tip = document.createElement('div')
-      tip.className = `tm-release-flow__check${blockedCount ? ' tm-release-flow__check--warn' : ''}`
-      tip.textContent = outdatedDocuments.length
-        ? `当前优先展示 ${outdatedDocuments.length} 份非最新模板版本病历的迁移预览；规则变化风险按病历快照模板与当前模板对比计算。`
-        : '当前所有引用病历都已处于最新模板版本，以下展示的是同版本迁移预览，用于确认新增规则和字段影响。'
-      content.append(tip)
-    }
-
-    previews.forEach(itemPreview => {
-      const group = document.createElement('div')
-      group.className = 'tm-trace-group'
-
-      const header = document.createElement('div')
-      header.className = 'tm-center-inline'
-      const title = document.createElement('div')
-      title.className = 'tm-trace-group__title'
-      title.textContent = `${itemPreview.record.title || itemPreview.record.id} · v${itemPreview.record.template.version} -> v${item.entry.schema.version}`
-      const badge = document.createElement('span')
-      badge.className = itemPreview.status.badgeClass
-      badge.textContent = itemPreview.status.badgeText
-      header.append(title, badge)
-      group.append(header)
-
-      const meta = document.createElement('div')
-      meta.className = 'tm-adapter-card__sources'
-      meta.textContent = `病历状态 ${itemPreview.record.status} / 最近更新 ${formatTime(itemPreview.record.updatedAt)}`
-      group.append(meta)
-
-      const list = document.createElement('div')
-      list.className = 'tm-center-list'
-
-      const rows = [
-        {
-          name: `保留字段 ${itemPreview.preview.mappings.length} 项`,
-          detail: itemPreview.mappingText,
-          badgeText: itemPreview.preview.mappings.length ? '已映射' : '无映射',
-          badgeClass: 'tm-center-badge tm-center-badge--success'
-        },
-        {
-          name: `新增必填字段 ${itemPreview.preview.unresolvedFields.filter(field => field.reason === 'required').length} 项`,
-          detail: itemPreview.requiredText,
-          badgeText: itemPreview.preview.unresolvedFields.some(field => field.reason === 'required')
-            ? '需补录'
-            : '无阻断',
-          badgeClass: itemPreview.preview.unresolvedFields.some(field => field.reason === 'required')
-            ? 'tm-center-badge tm-center-badge--danger'
-            : 'tm-center-badge tm-center-badge--success'
-        },
-        {
-          name: `丢失字段 ${itemPreview.preview.droppedFields.length} 项`,
-          detail: itemPreview.droppedText,
-          badgeText: itemPreview.preview.droppedFields.length ? '需复核' : '无丢失',
-          badgeClass: itemPreview.preview.droppedFields.length
-            ? 'tm-center-badge tm-center-badge--warning'
-            : 'tm-center-badge tm-center-badge--success'
-        },
-        {
-          name: `规则变化风险 ${itemPreview.previousRuleCount} -> ${itemPreview.nextRuleCount}`,
-          detail: itemPreview.previousRuleCount === itemPreview.nextRuleCount
-            ? `规则数量无变化${itemPreview.ambiguousText !== '无' ? ` / 歧义字段：${itemPreview.ambiguousText}` : ''}`
-            : `规则数量发生变化，建议复核触发条件与联动影响${itemPreview.ambiguousText !== '无' ? ` / 歧义字段：${itemPreview.ambiguousText}` : ''}`,
-          badgeText: itemPreview.previousRuleCount === itemPreview.nextRuleCount
-            ? '稳定'
-            : '需复核',
-          badgeClass: itemPreview.previousRuleCount === itemPreview.nextRuleCount
-            ? 'tm-center-badge tm-center-badge--success'
-            : 'tm-center-badge tm-center-badge--warning'
-        }
-      ]
-
-      rows.forEach(row => {
-        const item = document.createElement('div')
-        item.className = 'tm-center-list__row'
-        const info = document.createElement('div')
-        info.className = 'tm-center-list__info'
-        const name = document.createElement('strong')
-        name.textContent = row.name
-        const detail = document.createElement('small')
-        detail.textContent = row.detail
-        info.append(name, detail)
-        const rowBadge = document.createElement('span')
-        rowBadge.className = row.badgeClass
-        rowBadge.textContent = row.badgeText
-        item.append(info, rowBadge)
-        list.append(item)
-      })
-
-      group.append(list)
-      content.append(group)
-    })
-
     TemplateFeedback.openDialog({
       title: `${item.name} · 模板迁移预览`,
-      content,
+      content: this.migrationPreviewCenter.createDialogContent({
+        currentSchema: item.entry.schema,
+        documents: this.medicalRecordDomain.listByTemplate(item.id),
+        previewMigration: (documentId, schema) => {
+          return this.medicalRecordDomain.previewMigration(documentId, schema)
+            ?? undefined
+        }
+      }),
       width: 760,
       actions: [{ label: '关闭', variant: 'primary' }]
     })
@@ -1989,18 +1889,43 @@ export class TemplateManager {
     const records = item.entry.versionHistory.length
       ? item.entry.versionHistory
       : [{ status: item.entry.status, version: item.entry.schema.version, timestamp: item.updatedAt }]
+    const workflowTip = document.createElement('div')
+    workflowTip.className = 'tm-release-flow__check'
+    workflowTip.textContent = '建议流程：线上模板修复后先生成修订草稿，再补试运行验证和发布准入；如线上版本异常，可直接对已发布快照执行回滚为草稿。'
     const historyTitle = document.createElement('div')
     historyTitle.className = 'tm-version-center__section-title'
     historyTitle.textContent = '版本记录'
-    records.slice().reverse().forEach(record => {
-      history.append(this._renderVersionRecord(record))
-    })
-    content.append(summary, this._renderVersionImpactSummary(item), historyTitle, history)
+    records
+      .map((record, historyIndex) => ({ record, historyIndex }))
+      .slice()
+      .reverse()
+      .forEach(({ record, historyIndex }) => {
+        history.append(this._renderVersionRecord(item, record, historyIndex))
+      })
+    content.append(
+      summary,
+      this._renderVersionImpactSummary(item),
+      this._renderMedicalRecordDefectFeedbackSummary(item),
+      workflowTip,
+      historyTitle,
+      history
+    )
     TemplateFeedback.openDialog({
       title: `${item.name} · 版本中心`,
       content,
       width: 640,
       actions: [
+        ...(!item.builtIn
+          ? [{
+              label: '试运行验证',
+              closeOnClick: false,
+              onClick: () => this._openTrialRun(item)
+            }, {
+              label: '发版流程',
+              closeOnClick: false,
+              onClick: () => this._openReleaseFlow(item)
+            }]
+          : []),
         ...(!item.builtIn && this.templateDomain.getLatestPublishedRecord(item.id)?.schemaSnapshot
           ? [{
               label: '复制线上版本为修订草稿',
@@ -2061,7 +1986,6 @@ export class TemplateManager {
     const title = document.createElement('div')
     title.className = 'tm-version-center__section-title'
     title.textContent = '本次变更影响摘要'
-
     const helper = document.createElement('div')
     helper.className = 'tm-adapter-card__sources'
     helper.textContent = summary.baselineText
@@ -2090,7 +2014,73 @@ export class TemplateManager {
     return section
   }
 
-  private _renderVersionRecord(record: ITemplateVersionRecord): HTMLDivElement {
+  private _renderMedicalRecordDefectFeedbackSummary(
+    item: ITemplateWorkbenchItem
+  ): HTMLDivElement {
+    const section = document.createElement('div')
+    const title = document.createElement('div')
+    title.className = 'tm-version-center__section-title'
+    title.textContent = '病历缺陷反哺'
+    const records = this.templateDomain.getMedicalRecordTemplateFeedbackRecords(item.id)
+    const list = document.createElement('div')
+    list.className = 'tm-center-list'
+
+    if (!records.length) {
+      const empty = document.createElement('div')
+      empty.className = 'tm-adapter-card__sources'
+      empty.textContent = '暂无由病历质控缺陷反哺的模板问题单。'
+      section.append(title, empty)
+      return section
+    }
+
+    records.slice(0, 6).forEach(record => {
+      const row = document.createElement('div')
+      row.className = 'tm-center-list__row'
+      const info = document.createElement('div')
+      info.className = 'tm-center-list__info'
+      const label = document.createElement('strong')
+      label.textContent = `${record.category}：${record.message}`
+      const detail = document.createElement('small')
+      const fieldText = record.fieldLabel || record.fieldId || '整份病历'
+      const sourceText = record.sourceType === 'postArchiveRevision'
+        ? '归档后修订'
+        : '质控缺陷'
+      const trialText = record.latestTrialRunAt
+        ? `${record.latestTrialRunStatus === 'passed' ? '通过' : '失败'} · ${record.latestTrialRunSummary || '无说明'}`
+        : '待试运行验证'
+      const releaseText = record.latestReleaseAt && record.latestReleaseStatus
+        ? `${STATUS_LABEL[record.latestReleaseStatus]} · ${record.latestReleaseNote || '无说明'}`
+        : '待发布记录'
+      detail.textContent = [
+        `来源：${sourceText} · ${record.documentTitle}`,
+        `字段：${fieldText}`,
+        `修订草稿：${record.revisionDraftVersion ? `v${record.revisionDraftVersion}` : '待生成'}`,
+        `验证：${trialText}`,
+        `发版：${releaseText}`,
+        `影响范围：${record.impactScopeText || '待评估'}`
+      ].join(' / ')
+      info.append(label, detail)
+
+      const badge = document.createElement('span')
+      badge.className = record.status === 'published'
+        ? 'tm-center-badge tm-center-badge--success'
+        : record.status === 'trialRun'
+          ? 'tm-center-badge tm-center-badge--warning'
+          : 'tm-center-badge tm-center-badge--info'
+      badge.textContent = record.statusText
+      row.append(info, badge)
+      list.append(row)
+    })
+
+    section.append(title, list)
+    return section
+  }
+
+  private _renderVersionRecord(
+    item: ITemplateWorkbenchItem,
+    record: ITemplateVersionRecord,
+    historyIndex: number
+  ): HTMLDivElement {
     const row = document.createElement('div')
     row.className = 'tm-version-center__record'
     const status = document.createElement('span')
@@ -2102,7 +2092,51 @@ export class TemplateManager {
     const time = document.createElement('small')
     time.textContent = formatTime(record.timestamp)
     row.append(status, version, note, time)
+    if (!item.builtIn && record.status === 'published' && record.schemaSnapshot) {
+      const action = document.createElement('button')
+      action.type = 'button'
+      action.className = 'td-designer__btn'
+      action.textContent = '回滚为草稿'
+      action.onclick = () => {
+        void this._rollbackToVersion(item, historyIndex, record)
+      }
+      row.append(action)
+    }
     return row
+  }
+
+  private async _rollbackToVersion(
+    item: ITemplateWorkbenchItem,
+    historyIndex: number,
+    record: ITemplateVersionRecord
+  ) {
+    const confirmed = await TemplateFeedback.confirm({
+      title: '回滚为草稿',
+      message: `确认回滚到版本 v${record.version} 吗？当前工作版本会被该历史快照覆盖，试运行记录会清空，需要重新验证后再发布。`,
+      confirmText: '确认回滚'
+    })
+    if (!confirmed) return
+
+    const draft = this.templateDomain.rollbackToVersion(
+      item.id,
+      historyIndex,
+      '模板管理员'
+    )
+    if (!draft) {
+      TemplateFeedback.alert({
+        title: '回滚失败',
+        message: '未找到可用的历史快照',
+        tone: 'warning'
+      })
+      return
+    }
+
+    this._refreshWorkbench()
+    const nextEntry = this.templateDomain.getEntry(item.id)
+    if (nextEntry) {
+      this._openDesigner(nextEntry)
+    }
+    TemplateFeedback.toast('已回滚为草稿，请重新试运行并走发布准入', 'success')
   }
 
   private _openReleaseFlow(item: ITemplateWorkbenchItem) {
@@ -2239,41 +2273,11 @@ export class TemplateManager {
     batchReviewBtn.className = 'td-designer__btn td-designer__btn--ghost'
     batchReviewBtn.textContent = '批量送审当前视图'
     batchReviewBtn.type = 'button'
-    batchReviewBtn.addEventListener('click', () => this._batchSubmitForReview())
+    batchReviewBtn.addEventListener('click', () => {
+      void this._batchSubmitForReview()
+    })
 
-    const businessBtn = document.createElement('button')
-    businessBtn.className = 'td-designer__btn'
-    businessBtn.textContent = '业务字段中心'
-    businessBtn.type = 'button'
-    businessBtn.addEventListener('click', () => this._openBusinessFieldCenter())
-
-    const permissionBtn = document.createElement('button')
-    permissionBtn.className = 'td-designer__btn'
-    permissionBtn.textContent = '权限中心'
-    permissionBtn.type = 'button'
-    permissionBtn.addEventListener('click', () => this._openPermissionCenter())
-
-    const qualityBtn = document.createElement('button')
-    qualityBtn.className = 'td-designer__btn'
-    qualityBtn.textContent = '质控中心'
-    qualityBtn.type = 'button'
-    qualityBtn.addEventListener('click', () => this._openQualityCenter())
-
-    const auditBtn = document.createElement('button')
-    auditBtn.className = 'td-designer__btn'
-    auditBtn.textContent = '审计中心'
-    auditBtn.type = 'button'
-    auditBtn.addEventListener('click', () => this._openAuditCenter())
-
-    footer.append(
-      importBtn,
-      exportBtn,
-      batchReviewBtn,
-      businessBtn,
-      permissionBtn,
-      qualityBtn,
-      auditBtn
-    )
+    footer.append(importBtn, exportBtn, batchReviewBtn)
     return footer
   }
 
@@ -2282,7 +2286,7 @@ export class TemplateManager {
     TemplateFeedback.openDialog({
       title: '权限中心',
       content,
-      width: 640,
+      width: 760,
       actions: [{ label: '关闭', variant: 'primary' }]
     })
   }
@@ -2296,6 +2300,491 @@ export class TemplateManager {
       title: '质控中心',
       content,
       width: 680,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private _openMedicalRecordQualityCenter() {
+    const content = this.medicalRecordQualityCenter.createDialogContent({
+      documents: this.medicalRecordDomain.list(),
+      domain: this._createMedicalRecordOperationsDomain(),
+      onOpenDocumentTrace: documentId => {
+        const record = this.medicalRecordDomain.findDocument(documentId)
+        if (!record) return
+        const matched = this._getWorkbenchItems(false)
+          .find(item => item.id === record.template.id)
+        if (matched) this._openDocumentTrace(matched)
+      },
+      onOpenTemplate: templateId => {
+        const entry = this.templateDomain.getEntry(templateId)
+        if (entry) this._openDesigner(entry)
+      },
+      onOpenVersionCenter: templateId => {
+        const matched = this._getWorkbenchItems(false)
+          .find(item => item.id === templateId)
+        if (matched) this._openVersionCenter(matched)
+      },
+      onOpenField: (_documentId, fieldId) => {
+        const matched = this._getWorkbenchItems(false).find(item => {
+          const index = buildTemplateFieldRuntimeIndex(item.entry.schema)
+          return index.byId.has(fieldId)
+        })
+        if (matched) {
+          this._openDesigner(matched.entry)
+        }
+      }
+    })
+    TemplateFeedback.openDialog({
+      title: '病历质控工作台',
+      content,
+      width: 1040,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private _createMedicalRecordOperationsDomain() {
+    return {
+      getWritingSummary: (id: string) => this.medicalRecordDomain.getWritingSummary(id),
+      getTraceTimeline: (id: string) => this.medicalRecordDomain.getTraceTimeline(id),
+      getPostArchiveRevisionSummary: (id: string) => (
+        this.medicalRecordDomain.getPostArchiveRevisionSummary(id)
+      ),
+      getOpenDefectCount: (id: string) => this.medicalRecordDefectDomain.getOpenDefectCount(id)
+    }
+  }
+
+  private _openMedicalRecordOperationsCenter() {
+    this._syncMedicalRecordDefects()
+    const content = this.medicalRecordOperationsCenter.createDialogContent({
+      documents: this.medicalRecordDomain.list(),
+      domain: this._createMedicalRecordOperationsDomain(),
+      defects: this.medicalRecordDefectDomain.list(),
+      onOpenTrace: documentId => this._openMedicalRecordTimeline(documentId),
+      onOpenDefectCenter: () => this._openMedicalRecordDefectCenter(),
+      onOpenArchiveCenter: () => this._openMedicalRecordArchiveCenter()
+    })
+    TemplateFeedback.openDialog({
+      title: '病历运营闭环工作台',
+      content,
+      width: 1120,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private _syncMedicalRecordDefects() {
+    const documents = this.medicalRecordDomain.list()
+    const qualityModel = buildMedicalRecordQualityViewModel({
+      documents,
+      domain: this.medicalRecordDomain
+    })
+    this.medicalRecordDefectDomain.syncFromQualityItems(qualityModel.items)
+    return documents
+  }
+
+  private _openMedicalRecordDefectCenter() {
+    this._syncMedicalRecordDefects()
+    const content = this.medicalRecordDefectCenter.createDialogContent({
+      defects: this.medicalRecordDefectDomain.list(),
+      templateFeedback: this.medicalRecordDefectDomain.getTemplateFeedbackSummary(),
+      onReturnToDoctor: defectId => {
+        void this._returnMedicalRecordDefectToDoctor(defectId)
+      },
+      onMarkRectified: defectId => {
+        void this._markMedicalRecordDefectRectified(defectId)
+      },
+      onClose: defectId => {
+        void this._closeMedicalRecordDefect(defectId)
+      },
+      onConvertToTemplateIssue: defectId => {
+        void this._convertMedicalRecordDefectToTemplateIssue(defectId)
+      },
+      onOpenTrace: documentId => this._openMedicalRecordTimeline(documentId),
+      onOpenField: (documentId, fieldId) => this._openMedicalRecordField(documentId, fieldId),
+      onOpenVersionCenter: templateId => this._openTemplateVersionCenter(templateId)
+    })
+    TemplateFeedback.openDialog({
+      title: '缺陷整改与反馈闭环',
+      content,
+      width: 1040,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private async _returnMedicalRecordDefectToDoctor(defectId: string) {
+    const defect = this.medicalRecordDefectDomain.list()
+      .find(item => item.id === defectId)
+    if (!defect) return
+    const confirmed = await TemplateFeedback.confirm({
+      title: '退回医生整改',
+      message: `确认将 ${defect.documentTitle} 的缺陷退回 ${defect.owner} 整改？`,
+      confirmText: '退回医生'
+    })
+    if (!confirmed) return
+    this.medicalRecordDefectDomain.returnToDoctor(defectId, {
+      operator: '质控员',
+      reason: `${defect.category}：${defect.message}`
+    })
+    TemplateFeedback.toast('已退回医生，并写入病历留痕', 'success')
+    this._refreshWorkbench()
+  }
+
+  private async _markMedicalRecordDefectRectified(defectId: string) {
+    const defect = this.medicalRecordDefectDomain.list()
+      .find(item => item.id === defectId)
+    if (!defect) return
+    const confirmed = await TemplateFeedback.confirm({
+      title: '提交整改',
+      message: `确认将 ${defect.documentTitle} 标记为医生已整改并进入复核？`,
+      confirmText: '提交复核'
+    })
+    if (!confirmed) return
+    this.medicalRecordDefectDomain.markRectified(defectId, {
+      operator: defect.owner || '医生',
+      note: `已按质控要求处理：${defect.actionHint}`
+    })
+    TemplateFeedback.toast('整改已提交，等待质控复核', 'success')
+    this._refreshWorkbench()
+  }
+
+  private async _closeMedicalRecordDefect(defectId: string) {
+    const defect = this.medicalRecordDefectDomain.list()
+      .find(item => item.id === defectId)
+    if (!defect) return
+    const confirmed = await TemplateFeedback.confirm({
+      title: '复核关闭缺陷',
+      message: `确认关闭 ${defect.documentTitle} 的 ${defect.category} 缺陷？`,
+      confirmText: '复核关闭'
+    })
+    if (!confirmed) return
+    this.medicalRecordDefectDomain.close(defectId, {
+      operator: '质控员',
+      opinion: '复核通过，缺陷关闭'
+    })
+    TemplateFeedback.toast('缺陷已复核关闭，并写入病历留痕', 'success')
+    this._refreshWorkbench()
+  }
+
+  private async _convertMedicalRecordDefectToTemplateIssue(defectId: string) {
+    const defect = this.medicalRecordDefectDomain.list()
+      .find(item => item.id === defectId)
+    if (!defect) return
+    const confirmed = await TemplateFeedback.confirm({
+      title: '反哺模板问题单',
+      message: `确认将 ${defect.templateText} 的 ${defect.category} 缺陷转为模板问题单？`,
+      confirmText: '转为问题单'
+    })
+    if (!confirmed) return
+    const templateIssue = this.medicalRecordDefectDomain.convertToTemplateIssue(defectId, {
+      operator: '模板管理员',
+      suggestion: `由病历缺陷反哺模板修订：${defect.message}`
+    })
+    const feedback = templateIssue
+      ? this.templateDomain.createRevisionDraftFromDefect(templateIssue, '模板管理员')
+      : null
+    this._refreshWorkbench()
+    TemplateFeedback.toast(
+      feedback?.revisionDraftAt
+        ? '已转为模板问题单并生成修订草稿，可在版本中心跟踪验证和发布'
+        : '已转为模板问题单，当前模板暂无线上快照时需先进入版本中心补修订草稿',
+      'success'
+    )
+    this._openTemplateVersionCenter(defect.templateId)
+  }
+
+  private _openMedicalRecordField(documentId: string, fieldId?: string) {
+    const record = this.medicalRecordDomain.findDocument(documentId)
+    if (!record) return
+    const matched = this._getWorkbenchItems(false)
+      .find(item => item.id === record.template.id)
+    if (!matched) return
+    this._openDesigner(matched.entry)
+    if (fieldId) {
+      TemplateFeedback.toast(`已打开模板，目标字段：${fieldId}`, 'info')
+    }
+  }
+
+  private _openTemplateVersionCenter(templateId: string) {
+    const matched = this._getWorkbenchItems(false)
+      .find(item => item.id === templateId)
+    if (matched) this._openVersionCenter(matched)
+  }
+
+  private _openMedicalRecordArchiveCenter() {
+    const content = this.medicalRecordArchiveCenter.createDialogContent({
+      documents: this.medicalRecordDomain.list(),
+      domain: this._createMedicalRecordOperationsDomain(),
+      onArchive: documentId => this._archiveMedicalRecord(documentId),
+      onOpenTrace: documentId => this._openMedicalRecordTimeline(documentId),
+      onOpenReadonly: documentId => this._openMedicalRecordReadonlyPreview(documentId),
+      onRequestPostArchiveRevision: documentId => {
+        this._openPostArchiveRevisionRequest(documentId)
+      },
+      onOpenPostArchiveRevisions: documentId => {
+        this._openPostArchiveRevisionRecords(documentId)
+      }
+    })
+    TemplateFeedback.openDialog({
+      title: '病历归档质检',
+      content,
+      width: 1040,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private async _archiveMedicalRecord(documentId: string) {
+    const record = this.medicalRecordDomain.findDocument(documentId)
+    if (!record) return
+    const archiveModel = buildMedicalRecordArchiveCenterViewModel({
+      documents: [record],
+      domain: this._createMedicalRecordOperationsDomain()
+    })
+    const archiveItem = archiveModel.items[0]
+    if (!archiveItem?.canArchive) {
+      const blockers = archiveItem?.checklist
+        .filter(item => !item.passed && item.level === 'blocker')
+        .map(item => item.label)
+        .join('、')
+      TemplateFeedback.toast(
+        blockers ? `归档前仍需处理：${blockers}` : '归档前质检未通过',
+        'warning'
+      )
+      return
+    }
+    const confirmed = await TemplateFeedback.confirm({
+      title: '归档冻结',
+      message: `确认归档 ${record.title || record.id}？归档会写入状态留痕，并以当前模板快照和字段值作为归档依据。`,
+      confirmText: '确认归档'
+    })
+    if (!confirmed) return
+    const result = this.medicalRecordDomain.archiveDocument(record.id, {
+      operator: '病案室',
+      qualityConclusion: '归档前质检通过'
+    })
+    if (!result?.applied) {
+      TemplateFeedback.toast(result?.message || '归档失败，请检查病历状态', 'warning')
+      return
+    }
+    TemplateFeedback.toast('病历已归档冻结', 'success')
+    this._refreshWorkbench()
+  }
+
+  private _openPostArchiveRevisionRequest(documentId: string) {
+    const record = this.medicalRecordDomain.findDocument(documentId)
+    if (!record) return
+    const content = document.createElement('div')
+    content.className = 'tm-release-flow'
+    const reason = this._createTextInput('', '例如：归档后发现主诉需补充关键症状')
+    const applicant = this._createTextInput('病案室', '申请人')
+    const fieldId = this._createTextInput(
+      Object.keys(record.content.flatValues)[0] ?? '',
+      '字段 ID'
+    )
+    const afterValue = document.createElement('textarea')
+    afterValue.className = 'tm-release-flow__note'
+    afterValue.placeholder = '填写修订后的字段值，不会覆盖原归档快照'
+    content.append(
+      this._createGovernanceRow('修订原因', reason),
+      this._createGovernanceRow('申请人', applicant),
+      this._createGovernanceRow('影响字段', fieldId),
+      this._createGovernanceRow('拟修订值', afterValue)
+    )
+    TemplateFeedback.openDialog({
+      title: `${record.title || record.id} · 归档后修订申请`,
+      content,
+      width: 560,
+      actions: [
+        {
+          label: '提交申请',
+          variant: 'primary',
+          onClick: () => {
+            const targetFieldId = fieldId.value.trim()
+            if (!reason.value.trim() || !targetFieldId) {
+              TemplateFeedback.toast('请填写修订原因和影响字段', 'warning')
+              return
+            }
+            const revision = this.medicalRecordDomain.requestPostArchiveRevision(record.id, {
+              applicant: applicant.value.trim() || '病案室',
+              reason: reason.value.trim(),
+              affectedFieldIds: [targetFieldId],
+              proposedValues: {
+                [targetFieldId]: afterValue.value.trim() || null
+              }
+            })
+            if (!revision) {
+              TemplateFeedback.toast('仅已归档病历支持归档后修订申请', 'warning')
+              return
+            }
+            TemplateFeedback.toast('归档后修订申请已提交，并写入病历时间线', 'success')
+            this._refreshWorkbench()
+          }
+        }
+      ]
+    })
+  }
+
+  private _openPostArchiveRevisionRecords(documentId: string) {
+    const record = this.medicalRecordDomain.findDocument(documentId)
+    if (!record) return
+    const revisions = this.medicalRecordDomain.getPostArchiveRevisions(documentId)
+    const content = document.createElement('div')
+    content.className = 'tm-version-center'
+    if (!revisions.length) {
+      const empty = document.createElement('div')
+      empty.className = 'tm-empty'
+      empty.textContent = '当前病历暂无归档后修订申请。'
+      content.append(empty)
+    }
+    revisions.forEach(revision => {
+      const card = document.createElement('div')
+      card.className = 'tm-adapter-card'
+      const header = document.createElement('div')
+      header.className = 'tm-center-inline'
+      const info = document.createElement('div')
+      info.className = 'tm-center-list__info'
+      const title = document.createElement('strong')
+      title.textContent = revision.reason
+      const meta = document.createElement('small')
+      meta.textContent = `${revision.applicant} / v${revision.templateVersion} / ${new Date(revision.updatedAt).toLocaleString()}`
+      info.append(title, meta)
+      const status = document.createElement('span')
+      status.className = revision.status === 'approved'
+        ? 'tm-center-badge tm-center-badge--success'
+        : revision.status === 'rejected'
+          ? 'tm-center-badge tm-center-badge--danger'
+          : 'tm-center-badge tm-center-badge--warning'
+      status.textContent = revision.statusText
+      const actions = document.createElement('div')
+      actions.className = 'tm-inline-actions'
+      const feedbackBtn = document.createElement('button')
+      feedbackBtn.type = 'button'
+      feedbackBtn.className = 'td-designer__btn td-designer__btn--compact'
+      feedbackBtn.textContent = '反哺模板'
+      feedbackBtn.onclick = () => this._convertPostArchiveRevisionToTemplateIssue(revision.id)
+      actions.append(feedbackBtn, status)
+      header.append(info, actions)
+      const diffList = document.createElement('div')
+      diffList.className = 'tm-admission-report__list'
+      revision.fieldDiffs.forEach(diff => {
+        const row = document.createElement('div')
+        row.className = 'tm-admission-report__item tm-admission-report__item--info'
+        const badge = document.createElement('span')
+        badge.textContent = diff.fieldId
+        const detail = document.createElement('small')
+        detail.textContent = `${diff.before ?? '空值'} -> ${diff.after ?? '空值'}`
+        row.append(badge, detail)
+        diffList.append(row)
+      })
+      card.append(header, diffList)
+      content.append(card)
+    })
+    TemplateFeedback.openDialog({
+      title: `${record.title || record.id} · 归档后修订记录`,
+      content,
+      width: 760,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private async _convertPostArchiveRevisionToTemplateIssue(revisionId: string) {
+    const revision = this.medicalRecordDomain.getPostArchiveRevisions()
+      .find(item => item.id === revisionId)
+    if (!revision) return
+    const impacted = this.medicalRecordDomain.listArchivedByTemplateVersion(
+      revision.templateId,
+      revision.templateVersion
+    )
+    const confirmed = await TemplateFeedback.confirm({
+      title: '归档后问题反哺模板',
+      message: `确认将“${revision.reason}”转为模板修订问题？当前模板版本影响 ${impacted.length} 份已归档病历。`,
+      confirmText: '生成修订草稿'
+    })
+    if (!confirmed) return
+    const feedback = this.templateDomain.createRevisionDraftFromPostArchiveRevision(
+      revision,
+      {
+        operator: '模板管理员',
+        impactedArchivedDocuments: impacted,
+        impactScopeText: `当前模板 v${revision.templateVersion} 已归档病历 ${impacted.length} 份，发布前需复核影响范围`
+      }
+    )
+    this._refreshWorkbench()
+    TemplateFeedback.toast(
+      feedback.revisionDraftAt
+        ? '已生成模板修订草稿，可在版本中心完成验证、发布和影响范围复核'
+        : '已生成模板问题单，当前模板暂无线上快照时需先补修订草稿',
+      'success'
+    )
+    this._openTemplateVersionCenter(revision.templateId)
+  }
+
+  private _openMedicalRecordTimeline(documentId: string) {
+    const record = this.medicalRecordDomain.findDocument(documentId)
+    if (!record) return
+    const content = document.createElement('div')
+    content.className = 'tm-version-center'
+    const timeline = this.medicalRecordDomain.getTraceTimeline(documentId)
+    if (!timeline.length) {
+      const empty = document.createElement('div')
+      empty.className = 'tm-empty'
+      empty.textContent = '当前病历暂无留痕记录。'
+      content.append(empty)
+    }
+    timeline.forEach(event => {
+      const row = document.createElement('div')
+      row.className = 'tm-version-center__record'
+      const action = document.createElement('span')
+      action.textContent = event.title
+      const operator = document.createElement('strong')
+      operator.textContent = event.operator || '系统'
+      const summary = document.createElement('em')
+      summary.textContent = event.summary || `${event.changedFields?.length ?? 0} 个字段变更`
+      const time = document.createElement('small')
+      time.textContent = new Date(event.timestamp).toLocaleString()
+      row.append(action, operator, summary, time)
+      content.append(row)
+    })
+    TemplateFeedback.openDialog({
+      title: `${record.title || record.id} · 归档时间线`,
+      content,
+      width: 720,
+      actions: [{ label: '关闭', variant: 'primary' }]
+    })
+  }
+
+  private _openMedicalRecordReadonlyPreview(documentId: string) {
+    const record = this.medicalRecordDomain.findDocument(documentId)
+    if (!record) return
+    const content = document.createElement('div')
+    content.className = 'tm-version-center'
+    const summary = document.createElement('div')
+    summary.className = 'tm-version-center__summary'
+    summary.innerHTML = `
+      <div><span>病历状态</span><strong>${record.status}</strong></div>
+      <div><span>模板版本</span><strong>v${record.template.version}</strong></div>
+      <div><span>字段值</span><strong>${Object.keys(record.content.flatValues).length}</strong></div>
+      <div><span>结构化值</span><strong>${Object.keys(record.content.structuredValues ?? {}).length}</strong></div>
+      <div><span>留痕</span><strong>${record.traceEvents.length}</strong></div>
+    `
+    content.append(summary)
+    const list = document.createElement('div')
+    list.className = 'tm-admission-report__list'
+    Object.entries(record.content.flatValues).slice(0, 12).forEach(([fieldId, value]) => {
+      const row = document.createElement('div')
+      row.className = 'tm-admission-report__item tm-admission-report__item--info'
+      const badge = document.createElement('span')
+      badge.textContent = '字段'
+      const name = document.createElement('strong')
+      name.textContent = fieldId
+      const detail = document.createElement('small')
+      detail.textContent = value ?? '空值'
+      row.append(badge, name, detail)
+      list.append(row)
+    })
+    content.append(list)
+    TemplateFeedback.openDialog({
+      title: `${record.title || record.id} · 只读回显`,
+      content,
+      width: 720,
       actions: [{ label: '关闭', variant: 'primary' }]
     })
   }
@@ -2755,6 +3244,11 @@ export class TemplateManager {
     entry?: ITemplateRegistryEntry,
     focusLayoutSection?: 'paper' | 'margins' | 'decorations'
   ) {
+    const isPageMode = this.mode === 'page'
+    if (isPageMode) {
+      this.container.classList.add('tm-page--designer-open')
+    }
+
     const designer = new TemplateDesigner(
       {
         onSave: (saved, category) => {
@@ -2765,7 +3259,12 @@ export class TemplateManager {
           )
           this._refreshWorkbench()
         },
-        onClose: () => {}
+        onClose: () => {
+          if (isPageMode) {
+            this.container.classList.remove('tm-page--designer-open')
+          }
+        },
+        closeText: isPageMode ? '返回模板中心' : '返回'
       },
       entry
     )
@@ -3027,10 +3526,19 @@ export class TemplateManager {
     })
   }
 
+  dispose() {
+    this._dispose()
+  }
+
   private _dispose() {
+    if (this.isDisposed) return
+    this.isDisposed = true
     document.querySelectorAll('.tm-more-menu').forEach(el => el.remove())
-    this.mask.remove()
+    this.mask?.remove()
     this.container.remove()
-    this._unlockRootScroll()
+    if (this.mode === 'dialog') {
+      this._unlockRootScroll()
+    }
+    this.options.onClose?.()
   }
 }

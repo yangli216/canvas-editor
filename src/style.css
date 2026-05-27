@@ -39,6 +39,25 @@ body {
   background-color: #F2F4F7;
 }
 
+body.app--template-manager {
+  overflow: hidden;
+}
+
+.tm-page-host {
+  display: none;
+}
+
+body.app--template-manager .tm-page-host {
+  display: block;
+}
+
+body.app--template-manager .menu,
+body.app--template-manager .editor,
+body.app--template-manager .medical-record-trace,
+body.app--template-manager .footer {
+  display: none;
+}
+
 ul {
   list-style: none;
 }

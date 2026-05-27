@@ -97,6 +97,7 @@ export default defineConfig({
         items: [
           { text: '模板与病历数据存储方案', link: '/guide/template-storage' },
           { text: '病历存储与迁移落地方案', link: '/guide/emr-storage-implementation' },
+          { text: '病历质控与归档运营闭环说明', link: '/guide/emr-quality-archive-workflow' },
           { text: '病程记录业务支撑分析', link: '/guide/progress-note-business-analysis' }
         ]
       }

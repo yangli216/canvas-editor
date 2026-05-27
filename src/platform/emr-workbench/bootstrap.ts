@@ -17,6 +17,8 @@ export interface IEmrWorkbenchBootstrapResult {
   openTemplateWorkbench: () => void
 }
 
+const TEMPLATE_MANAGER_HASH = '#template-manager'
+
 export function bootstrapEmrWorkbench(
   editor: Editor
 ): IEmrWorkbenchBootstrapResult {
@@ -42,17 +44,58 @@ export function bootstrapEmrWorkbench(
     }
   }
 
+  const templateManagerHost = document.createElement('div')
+  templateManagerHost.className = 'tm-page-host'
+  document.body.append(templateManagerHost)
+
+  let templateManager: TemplateManager | null = null
+
+  const closeTemplateWorkbench = () => {
+    templateManager?.dispose()
+  }
+
   const openTemplateWorkbench = () => {
-    new TemplateManager({
+    if (templateManager) return
+    document.body.classList.add('app--template-manager')
+    templateManager = new TemplateManager({
       documentStore,
-      onApply: applyTemplate
+      onApply: applyTemplate,
+      mode: 'page',
+      host: templateManagerHost,
+      onClose: () => {
+        templateManager = null
+        templateManagerHost.innerHTML = ''
+        document.body.classList.remove('app--template-manager')
+        if (window.location.hash === TEMPLATE_MANAGER_HASH) {
+          window.history.replaceState(
+            window.history.state,
+            document.title,
+            `${window.location.pathname}${window.location.search}`
+          )
+        }
+      }
     })
+  }
+
+  const syncTemplateWorkbenchRoute = () => {
+    if (window.location.hash === TEMPLATE_MANAGER_HASH) {
+      openTemplateWorkbench()
+    } else {
+      closeTemplateWorkbench()
+    }
   }
 
   const templateManagerBtn = document.querySelector<HTMLButtonElement>('.btn-template-manager')
   if (templateManagerBtn) {
-    templateManagerBtn.onclick = openTemplateWorkbench
+    templateManagerBtn.onclick = () => {
+      if (window.location.hash !== TEMPLATE_MANAGER_HASH) {
+        window.location.hash = TEMPLATE_MANAGER_HASH
+      }
+    }
   }
+
+  window.addEventListener('hashchange', syncTemplateWorkbenchRoute)
+  syncTemplateWorkbenchRoute()
 
   return {
     documentStore,

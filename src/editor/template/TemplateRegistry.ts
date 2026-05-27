@@ -473,7 +473,11 @@ class TemplateRegistry {
     return JSON.parse(JSON.stringify(snapshot)) as ITemplateSchema
   }
 
-  rollbackToVersion(id: string, historyIndex: number): ITemplateSchema | undefined {
+  rollbackToVersion(
+    id: string,
+    historyIndex: number,
+    operator?: string
+  ): ITemplateSchema | undefined {
     const entry = this.entries.get(id)
     if (!entry) return undefined
     const record = entry.versionHistory[historyIndex]
@@ -485,6 +489,7 @@ class TemplateRegistry {
       schema: snapshot,
       status: 'draft',
       updatedAt: now,
+      trialRuns: [],
       versionHistory: [
         ...entry.versionHistory,
         {
@@ -498,7 +503,9 @@ class TemplateRegistry {
     const nextEntry = this.entries.get(id)
     if (nextEntry) {
       this._pushAudit(nextEntry, 'rollback', {
-        note: `回滚到版本 ${snapshot.version}`
+        operator,
+        note: `回滚到版本 ${snapshot.version}`,
+        detail: `回滚到历史版本 ${snapshot.version}，并清空试运行记录`
       })
     }
     this._persist()

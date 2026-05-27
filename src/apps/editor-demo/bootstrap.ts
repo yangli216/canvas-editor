@@ -1,6 +1,7 @@
 import { documentData, options } from '../../mock'
 import Editor from '../../editor'
 import { bootstrapEmrWorkbench } from '../../platform/emr-workbench'
+import { setupEditorDemoInteractions } from './interactions'
 
 export interface IEditorDemoAppContext {
   editor: Editor
@@ -22,6 +23,7 @@ export function bootstrapEditorDemoApp(): IEditorDemoAppContext {
   Reflect.set(window, '__CANVAS_EDITOR_INSTANCE__', editor)
 
   bootstrapEmrWorkbench(editor)
+  setupEditorDemoInteractions(editor, isApple)
 
   return {
     editor,

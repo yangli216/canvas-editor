@@ -99,6 +99,11 @@ describe('template registry lifecycle', () => {
     const schema = createSchema(id)
     templateRegistry.register(schema, '住院记录', false)
     templateRegistry.publish(id)
+    templateRegistry.addTrialRun(id, {
+      scenario: '线上版本验证',
+      status: 'passed',
+      summary: '历史版本已验证'
+    })
 
     templateRegistry.register(
       {
@@ -114,6 +119,7 @@ describe('template registry lifecycle', () => {
 
     expect(rolledBack?.description).toBeUndefined()
     expect(templateRegistry.getEntry(id)?.status).toBe('draft')
+    expect(templateRegistry.getTrialRuns(id)).toHaveLength(0)
     expect(templateRegistry.getEntry(id)!.versionHistory.length).toBeGreaterThan(
       entry.versionHistory.length
     )

@@ -28,6 +28,7 @@ import './template-designer.css'
 export interface ITemplateDesignerOptions {
   onSave: (schema: ITemplateSchema, category: string) => void
   onClose: () => void
+  closeText?: string
 }
 
 function generateId(): string {
@@ -409,7 +410,7 @@ export class TemplateDesigner {
 
     const closeBtn = document.createElement('button')
     closeBtn.className = 'td-designer__btn td-designer__btn--ghost'
-    closeBtn.textContent = '返回'
+    closeBtn.textContent = this.options.closeText ?? '返回'
     closeBtn.type = 'button'
     closeBtn.addEventListener('click', () => this._handleClose())
 
