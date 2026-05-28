@@ -18,7 +18,10 @@ import { TemplateRuleEngine } from '../../editor/template/TemplateRuleEngine'
 import { BlockPalette } from './BlockPalette'
 import { SchemaCanvas } from './SchemaCanvas'
 import { PropertiesPanel } from './PropertiesPanel'
-import type { PropertiesChangePhase } from './PropertiesPanel'
+import type {
+  ITemplateMetadataFieldBindingOption,
+  PropertiesChangePhase
+} from './PropertiesPanel'
 import { StructureTree } from './StructureTree'
 import { TemplateFeedback } from './TemplateFeedback'
 import type { SelectionTarget } from './SchemaCanvas'
@@ -29,6 +32,7 @@ export interface ITemplateDesignerOptions {
   onSave: (schema: ITemplateSchema, category: string) => void
   onClose: () => void
   closeText?: string
+  metadataFields?: ITemplateMetadataFieldBindingOption[]
 }
 
 function generateId(): string {
@@ -278,7 +282,8 @@ export class TemplateDesigner {
       onFieldChange: (blockIndex, fieldId, updated, phase) =>
         this._handleFieldChange(blockIndex, fieldId, updated, phase),
       onAddField: blockIndex => this._handleAddField(blockIndex),
-      onLayoutChange: (layout, phase) => this._handleLayoutChange(layout, phase)
+      onLayoutChange: (layout, phase) => this._handleLayoutChange(layout, phase),
+      metadataFields: options.metadataFields
     })
 
     this.structureTree = new StructureTree({

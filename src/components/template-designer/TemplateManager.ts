@@ -1,5 +1,7 @@
 import { EDITOR_COMPONENT, EditorComponent } from '../../editor'
 import {
+  BusinessMetadataDomainService,
+  HisIntegrationDomainService,
   MedicalRecordDefectDomainService,
   MedicalRecordDomainService,
   TemplateDomainService,
@@ -11,21 +13,20 @@ import {
   type TemplatePublishStatus
 } from '../../platform/emr-workbench/domain'
 import {
-  applyBusinessFieldQuickPreset,
   AdmissionCenterModule,
   AuditCenterModule,
   BusinessFieldCenterModule,
+  HisIntegrationCenterModule,
   buildMedicalRecordQualityViewModel,
-  getBusinessFieldQuickPresets,
+  collectBusinessFieldTemplateAssets,
   MedicalRecordArchiveCenterModule,
   buildMedicalRecordArchiveCenterViewModel,
   MedicalRecordDefectCenterModule,
   MedicalRecordOperationsCenterModule,
   MedicalRecordQualityCenterModule,
   MigrationPreviewCenterModule,
-  recommendBusinessFieldQuickPresets,
+  type IBusinessFieldCenterPendingCandidate,
   type IBusinessFieldCenterFieldAsset,
-  type IBusinessFieldQuickPreset,
   PermissionCenterModule,
   QualityCenterModule,
   TrialRunCenterModule
@@ -37,6 +38,7 @@ import {
 import type {
   ITemplateBlock,
   ITemplateField,
+  ITemplateMetadataFieldSnapshotMap,
   ITemplateSchema
 } from '../../editor/template/index'
 import type { ITemplateFieldMetadata } from '../../editor/template/index'
@@ -678,7 +680,10 @@ export class TemplateManager {
   private readonly templateDomain: TemplateDomainService
   private readonly medicalRecordDomain: MedicalRecordDomainService
   private readonly medicalRecordDefectDomain: MedicalRecordDefectDomainService
+  private readonly businessMetadataDomain = new BusinessMetadataDomainService()
   private readonly businessFieldCenter = new BusinessFieldCenterModule()
+  private readonly hisIntegrationDomain = new HisIntegrationDomainService()
+  private readonly hisIntegrationCenter = new HisIntegrationCenterModule()
   private readonly admissionCenter = new AdmissionCenterModule()
   private readonly trialRunCenter = new TrialRunCenterModule()
   private readonly migrationPreviewCenter = new MigrationPreviewCenterModule()
@@ -703,6 +708,7 @@ export class TemplateManager {
       this.templateDomain,
       this.medicalRecordDomain
     )
+    this._registerHisIntegrationSandboxConnector()
     this.templateDomain.loadFromStorage()
     if (this.mode === 'dialog') {
       this._lockRootScroll()
@@ -717,6 +723,93 @@ export class TemplateManager {
     this.previousHtmlOverflow = document.documentElement.style.overflow
     document.body.style.overflow = 'hidden'
     document.documentElement.style.overflow = 'hidden'
+  }
+
+  private _registerHisIntegrationSandboxConnector() {
+    this.hisIntegrationDomain.registerConnector({
+      id: 'his-sandbox',
+      label: '院内 HIS 沙箱连接器',
+      mode: 'sandbox',
+      authType: 'trustedTicket',
+      dataSources: ['patient', 'encounter', 'order', 'diagnosis'],
+      capabilities: ['context', 'read', 'writeback', 'callback'],
+      description: '用于验证 HIS 上下文透传、字段读取和状态回写链路',
+      resolveContext: ({ launchContext }) => ({
+        patientId: String(launchContext.scope.patientId || 'P000001'),
+        encounterId: String(launchContext.scope.encounterId || 'E000001'),
+        departmentId: String(launchContext.scope.departmentId || 'DEPT-EMR'),
+        operatorId: String(launchContext.scope.operatorId || 'U0001'),
+        operatorName: String(launchContext.scope.operatorName || '联调医生'),
+        roleCodes: ['doctor', 'emr-designer'],
+        wardId: String(launchContext.scope.wardId || 'WARD-01'),
+        taskId: String(launchContext.scope.taskId || 'TASK-EMR-SANDBOX'),
+        documentType: String(launchContext.scope.documentType || 'emr')
+      }),
+      read: ({ fields }) => ({
+        values: fields.map(field => ({
+          fieldId: field.fieldId,
+          value: `${field.dataSource}.${field.businessCode}`
+        }))
+      }),
+      writeBack: ({ payload }) => ({
+        accepted: true,
+        externalRecordId: `HIS-${payload.documentId}`,
+        message: `已接收 ${payload.status} 状态回写`
+      })
+    })
+  }
+
+  private _getBusinessMetadataSnapshotMap(): ITemplateMetadataFieldSnapshotMap {
+    return this.businessMetadataDomain.listFields().reduce((acc, field) => {
+      acc[field.id] = {
+        id: field.id,
+        code: field.code,
+        name: field.name,
+        group: field.group,
+        dataSource: field.dataSource,
+        permission: field.permission,
+        exportPath: field.exportPath,
+        tags: field.tags
+      }
+      return acc
+    }, {} as ITemplateMetadataFieldSnapshotMap)
+  }
+
+  private _syncBusinessMetadataDomain(items = this._getWorkbenchItems(false)) {
+    const assets = collectBusinessFieldTemplateAssets(
+      items,
+      this._getBusinessMetadataSnapshotMap()
+    )
+    this.businessMetadataDomain.syncFieldsFromTemplateAssets(assets)
+    return { items, assets }
+  }
+
+  private _getBusinessMetadataState() {
+    const { items, assets } = this._syncBusinessMetadataDomain()
+    const { candidates, conflicts } =
+      this.businessMetadataDomain.buildFieldCandidatesFromTemplates(assets)
+    return {
+      items,
+      assets,
+      fields: this.businessMetadataDomain.listFields(),
+      bindings: this.businessMetadataDomain.listBindings(),
+      hospitalMappings: this.businessMetadataDomain.listHospitalFieldMappings(),
+      candidates,
+      conflicts
+    }
+  }
+
+  private _getMetadataFieldBindingOptions() {
+    return this.businessMetadataDomain.listFields().map(field => ({
+      id: field.id,
+      code: field.code,
+      name: field.name,
+      group: field.group,
+      dataSource: field.dataSource,
+      permission: field.permission,
+      exportPath: field.exportPath,
+      tags: field.tags
+    }))
   }
 
   private _unlockRootScroll() {
@@ -823,6 +916,12 @@ export class TemplateManager {
     businessFieldBtn.type = 'button'
     businessFieldBtn.addEventListener('click', () => this._openBusinessFieldCenter())
 
+    const hisIntegrationBtn = document.createElement('button')
+    hisIntegrationBtn.className = 'td-designer__btn td-designer__btn--ghost'
+    hisIntegrationBtn.textContent = 'HIS 联调'
+    hisIntegrationBtn.type = 'button'
+    hisIntegrationBtn.addEventListener('click', () => this._openHisIntegrationCenter())
+
     const auditBtn = document.createElement('button')
     auditBtn.className = 'td-designer__btn td-designer__btn--ghost'
     auditBtn.textContent = '审计中心'
@@ -854,6 +953,7 @@ export class TemplateManager {
       archiveBtn,
       defectBtn,
       businessFieldBtn,
+      hisIntegrationBtn,
       auditBtn,
       newBtn,
       closeBtn
@@ -2790,11 +2890,17 @@ export class TemplateManager {
   }
 
   private _openBusinessFieldCenter() {
+    const getMetadataState = () => this._getBusinessMetadataState()
     const content = this.businessFieldCenter.createDialogContent({
-      getItems: () => this._getWorkbenchItems(false),
+      getItems: () => getMetadataState().items,
       getAdapters: () => this.templateDomain.listDataAdapters(),
-      onQuickApplyField: (field, rerender) =>
-        this._openBusinessFieldQuickApplyDialog(field, rerender),
+      getMetadataFields: () => getMetadataState().fields,
+      getBindings: () => getMetadataState().bindings,
+      getHospitalMappings: () => getMetadataState().hospitalMappings,
+      getCandidates: () => getMetadataState().candidates,
+      getConflicts: () => getMetadataState().conflicts,
+      onApplyCandidate: (candidate, rerender) =>
+        this._applyBusinessMetadataCandidate(candidate, rerender),
       onMaintainField: (field, rerender) => this._openBusinessFieldAssetDialog(field, rerender),
       onOpenTemplate: templateId => {
         const entry = this.templateDomain.getEntry(templateId)
@@ -2805,109 +2911,114 @@ export class TemplateManager {
     })
 
     TemplateFeedback.openDialog({
-      title: '业务字段中心',
+      title: '字段主数据管理台',
       content,
       width: 860,
       actions: [{ label: '关闭', variant: 'primary' }]
     })
   }
 
-  private _openBusinessFieldQuickApplyDialog(
-    field: IBusinessFieldCenterFieldAsset,
-    rerender: () => void
-  ) {
-    const recommended = recommendBusinessFieldQuickPresets({
-      id: field.fieldId,
-      label: field.label,
-      metadata: {
-        businessCode: field.businessCode || undefined,
-        group: field.group || undefined,
-        dataSource: field.dataSource || undefined,
-        permission: field.permission || undefined,
-        exportPath: field.exportPath || undefined
-      }
+  private _openHisIntegrationCenter() {
+    const content = this.hisIntegrationCenter.createDialogContent({
+      getConnectors: () => this.hisIntegrationDomain.listConnectors(),
+      getSessions: () => this.hisIntegrationDomain.listSessions(),
+      getTraces: () => this.hisIntegrationDomain.listTraceRecords(),
+      getFieldDiagnostics: () => this.hisIntegrationDomain.listFieldDiagnostics(),
+      getOperationsSnapshot: () => this.hisIntegrationDomain.buildOperationsSnapshot()
     })
-    const recommendedIds = new Set(recommended.map(item => item.id))
-    const allPresets = getBusinessFieldQuickPresets()
-    const fallbackPresets = allPresets.filter(item => !recommendedIds.has(item.id))
-    const content = document.createElement('div')
-    content.className = 'tm-governance-form'
-
-    const hint = document.createElement('div')
-    hint.className = 'tm-adapter-card__sources'
-    hint.textContent = '点击下方任一快配后，会立即把控件类型、占位文案、业务编码、导出路径、数据源和权限标签一起回写到模板字段。'
-
-    const appendPresetGrid = (
-      titleText: string,
-      presets: IBusinessFieldQuickPreset[],
-      helperText?: string
-    ) => {
-      const title = document.createElement('div')
-      title.className = 'tm-version-center__section-title'
-      title.textContent = titleText
-      content.append(title)
-      if (helperText) {
-        const helper = document.createElement('div')
-        helper.className = 'tm-adapter-card__sources'
-        helper.textContent = helperText
-        content.append(helper)
-      }
-      const grid = document.createElement('div')
-      grid.className = 'td-props__preset-grid'
-      presets.forEach(preset => {
-        const btn = document.createElement('button')
-        btn.type = 'button'
-        btn.className = 'td-props__preset-card'
-        const label = document.createElement('strong')
-        label.textContent = preset.label
-        const desc = document.createElement('span')
-        desc.textContent = preset.description
-        btn.append(label, desc)
-        btn.onclick = () => this._quickApplyBusinessFieldPreset(field, preset, rerender)
-        grid.append(btn)
-      })
-      content.append(grid)
-    }
-
-    content.append(hint)
-    if (recommended.length) {
-      appendPresetGrid(
-        '智能推荐',
-        recommended,
-        `已根据字段名、标签和现有绑定推断出更可能命中的快配：${recommended.map(item => item.label).join('、')}`
-      )
-    }
-    appendPresetGrid(
-      recommended.length ? '全部业务快配' : '业务快配',
-      recommended.length ? fallbackPresets : allPresets
-    )
 
     TemplateFeedback.openDialog({
-      title: `${field.label} · 字段快配`,
+      title: 'HIS 接入联调',
       content,
-      width: 640,
+      width: 860,
       actions: [{ label: '关闭', variant: 'primary' }]
     })
+  }
+
+  private _applyBusinessMetadataCandidate(
+    candidate: IBusinessFieldCenterPendingCandidate,
+    rerender: () => void
+  ) {
+    const state = this._getBusinessMetadataState()
+    const targetField = candidate.metadataFieldId
+      ? this.businessMetadataDomain.getField(candidate.metadataFieldId)
+      : this.businessMetadataDomain.createField({
+          code: candidate.code,
+          name: candidate.name,
+          group: candidate.group,
+          dataSource: candidate.dataSource,
+          permission: candidate.permission,
+          exportPath: candidate.exportPath
+        })
+
+    if (!targetField) {
+      TemplateFeedback.toast('未找到可绑定的主数据字段', 'warning')
+      return
+    }
+
+    const itemById = new Map(state.items.map(item => [item.id, item]))
+    const nextSchemas = new Map<string, ITemplateSchema>()
+    let updatedFieldCount = 0
+
+    state.assets.forEach(asset => {
+      const assetCode = asset.metadata?.businessCode || asset.metadata?.exportPath || ''
+      if (assetCode !== candidate.code) return
+      if (asset.metadata?.metadataFieldId === targetField.id) return
+
+      const item = itemById.get(asset.templateId)
+      if (!item || item.builtIn) return
+
+      const baseSchema = nextSchemas.get(asset.templateId) ?? item.entry.schema
+      const nextSchema = updateTemplateFieldMetadata(baseSchema, asset.fieldId, {
+        ...asset.metadata,
+        metadataFieldId: targetField.id,
+        businessCode: targetField.code,
+        group: targetField.group,
+        dataSource: targetField.dataSource,
+        permission: targetField.permission,
+        exportPath: targetField.exportPath,
+        tags: targetField.tags ?? asset.metadata?.tags
+      })
+
+      nextSchemas.set(asset.templateId, nextSchema)
+      updatedFieldCount += 1
+    })
+
+    nextSchemas.forEach((schema, templateId) => {
+      const item = itemById.get(templateId)
+      if (!item) return
+      this.templateDomain.register(schema, item.category, false, {
+        note: candidate.metadataFieldId
+          ? `补齐主数据绑定 ${targetField.name}`
+          : `生成主数据并绑定 ${targetField.name}`,
+        operator: '模板管理员'
+      })
+    })
+
+    this._refreshWorkbench()
+    rerender()
+    TemplateFeedback.toast(
+      candidate.metadataFieldId
+        ? `已补齐 ${updatedFieldCount} 处主数据绑定`
+        : `已生成主数据并绑定 ${updatedFieldCount} 处模板字段`,
+      'success'
+    )
   }
 
   private _openBusinessFieldAssetDialog(
     field: IBusinessFieldCenterFieldAsset,
     rerender: () => void
   ) {
-    const entry = this.templateDomain.getEntry(field.templateId)
-    if (!entry || entry.builtIn) {
-      TemplateFeedback.toast('内置模板字段暂不支持直接维护，可先生成草稿后再编辑', 'info')
-      return
-    }
-
     const content = document.createElement('div')
     content.className = 'tm-governance-form'
+    const name = this._createTextInput(field.label, '患者姓名')
     const businessCode = this._createTextInput(field.businessCode, 'patient.name')
     const group = this._createTextInput(field.group, '基本信息')
-    const dataSource = this._createTextInput(field.dataSource, 'patient')
+    const dataSource = this._createTextInput(field.dataSource, 'his.patient')
     const permission = this._createTextInput(field.permission, 'doctor.read')
     const exportPath = this._createTextInput(field.exportPath, 'patient.name')
     content.append(
+      this._createGovernanceRow('字段名称', name),
       this._createGovernanceRow('业务编码', businessCode),
       this._createGovernanceRow('字段分组', group),
       this._createGovernanceRow('数据源', dataSource),
@@ -2921,56 +3032,23 @@ export class TemplateManager {
       width: 560,
       actions: [
         {
-          label: '保存字段资产',
+          label: '保存主数据',
           variant: 'primary',
           onClick: () => {
-            const nextSchema = updateTemplateFieldMetadata(
-              entry.schema,
-              field.fieldId,
-              {
-                ...(entry.schema ? buildTemplateFieldRuntimeIndex(entry.schema).byId.get(field.fieldId)?.field.metadata : {}),
-                businessCode: businessCode.value.trim(),
-                group: group.value.trim(),
-                dataSource: dataSource.value.trim(),
-                permission: permission.value.trim(),
-                exportPath: exportPath.value.trim()
-              }
-            )
-            this.templateDomain.register(nextSchema, entry.category, false, {
-              note: `维护字段资产 ${field.label}`,
-              operator: '模板管理员'
+            this.businessMetadataDomain.updateField(field.assetId, {
+              name: name.value.trim(),
+              code: businessCode.value.trim(),
+              group: group.value.trim(),
+              dataSource: dataSource.value.trim(),
+              permission: permission.value.trim(),
+              exportPath: exportPath.value.trim()
             })
-            this._refreshWorkbench()
             rerender()
-            TemplateFeedback.toast('字段资产已保存', 'success')
+            TemplateFeedback.toast('字段主数据已保存', 'success')
           }
         }
       ]
     })
-  }
-
-  private _quickApplyBusinessFieldPreset(
-    field: IBusinessFieldCenterFieldAsset,
-    preset: IBusinessFieldQuickPreset,
-    rerender: () => void
-  ) {
-    const entry = this.templateDomain.getEntry(field.templateId)
-    if (!entry || entry.builtIn) {
-      TemplateFeedback.toast('内置模板字段暂不支持字段快配，可先生成草稿后再编辑', 'info')
-      return
-    }
-
-    const nextSchema = updateTemplateField(entry.schema, field.fieldId, currentField => {
-      return applyBusinessFieldQuickPreset(currentField, preset)
-    })
-
-    this.templateDomain.register(nextSchema, entry.category, false, {
-      note: `字段快配 ${preset.label} -> ${field.label}`,
-      operator: '模板管理员'
-    })
-    this._refreshWorkbench()
-    rerender()
-    TemplateFeedback.toast(`已套用字段快配：${preset.label}`, 'success')
   }
 
   private _openAuditCenter() {
@@ -3244,6 +3322,7 @@ export class TemplateManager {
     entry?: ITemplateRegistryEntry,
     focusLayoutSection?: 'paper' | 'margins' | 'decorations'
   ) {
+    this._syncBusinessMetadataDomain()
     const isPageMode = this.mode === 'page'
     if (isPageMode) {
       this.container.classList.add('tm-page--designer-open')
@@ -3264,7 +3343,8 @@ export class TemplateManager {
             this.container.classList.remove('tm-page--designer-open')
           }
         },
-        closeText: isPageMode ? '返回模板中心' : '返回'
+        closeText: isPageMode ? '返回模板中心' : '返回',
+        metadataFields: this._getMetadataFieldBindingOptions()
       },
       entry
     )

@@ -1,6 +1,17 @@
-import type { ITemplateSchema } from '../../../../editor/template'
+import type {
+  ITemplateMetadataFieldSnapshotMap,
+  ITemplateSchema
+} from '../../../../editor/template'
 import type { ITemplateDataAdapter } from '../../../../editor/template/TemplateDataAdapter'
 import { buildTemplateFieldRuntimeIndex } from '../../../../editor/template/TemplateRuntime'
+import type {
+  IBusinessMetadataConflict,
+  IBusinessMetadataField,
+  IBusinessMetadataFieldCandidate,
+  IBusinessMetadataHospitalFieldMapping,
+  IBusinessMetadataTemplateBinding,
+  IBusinessMetadataTemplateFieldAsset
+} from '../../domain/business-metadata-domain-service'
 import { recommendBusinessFieldQuickPresets } from './presets'
 
 export type BusinessFieldCenterScopeFilter = 'all' | 'editable' | 'builtin'
@@ -30,14 +41,7 @@ export interface IBusinessFieldCenterTemplateItem {
 
 export interface IBusinessFieldCenterFieldAsset {
   assetId: string
-  templateId: string
-  templateName: string
-  templateCategory: string
-  builtIn: boolean
-  owner: string
-  fieldId: string
   label: string
-  type: string
   businessCode: string
   group: string
   dataSource: string
@@ -46,7 +50,28 @@ export interface IBusinessFieldCenterFieldAsset {
   issueCount: number
   issueText: string
   statusText: string
+  bindingCount: number
+  candidateCount: number
+  hospitalMappingCount: number
+  hospitalMappingText: string
+  templateIds: string[]
+  templateNames: string[]
   recommendedPresetLabels: string[]
+}
+
+export interface IBusinessFieldCenterPendingCandidate {
+  code: string
+  name: string
+  group: string
+  dataSource: string
+  permission: string
+  exportPath: string
+  usageCount: number
+  pendingUsageCount: number
+  templateIds: string[]
+  templateNames: string[]
+  metadataFieldId?: string
+  metadataFieldName?: string
 }
 
 export interface IBusinessFieldCenterFilters {
@@ -60,6 +85,10 @@ export interface IBusinessFieldCenterFilters {
 export interface IBusinessFieldCenterViewModel {
   summary: {
     adapterCount: number
+    masterFieldText: string
+    boundFieldText: string
+    candidateFieldCount: number
+    conflictCount: number
     fieldAssetText: string
     maintainedFieldText: string
     dataSourceCount: number
@@ -81,112 +110,218 @@ export interface IBusinessFieldCenterViewModel {
     sourcesText: string
   }>
   fields: IBusinessFieldCenterFieldAsset[]
+  pendingCandidates: IBusinessFieldCenterPendingCandidate[]
   risks: Array<{
-    name: string
+    code: string
     badgeText: string
     detail: string
   }>
 }
 
-function createFieldAssets(
-  items: IBusinessFieldCenterTemplateItem[]
-): IBusinessFieldCenterFieldAsset[] {
-  return items.flatMap(item => {
-    const index = buildTemplateFieldRuntimeIndex(item.entry.schema)
-    return index.all.map(node => {
-      const metadata = node.metadata ?? {}
-      const issues: string[] = []
-      if (!metadata.businessCode && !metadata.exportPath) {
-        issues.push('缺少业务编码/导出路径')
-      }
-      if (!metadata.group) {
-        issues.push('未分组')
-      }
-      if (!metadata.dataSource) {
-        issues.push('缺少数据源')
-      }
-      if (!metadata.permission) {
-        issues.push('未配置权限标签')
-      }
-      const recommendedPresetLabels = recommendBusinessFieldQuickPresets({
-        id: node.field.id,
-        label: node.field.label,
-        placeholder: node.field.placeholder,
-        type: node.field.type,
-        metadata
-      }).map(preset => preset.label)
+const CONFLICT_REASON_BADGE: Record<IBusinessMetadataConflict['reason'], string> = {
+  dataSourceMismatch: '数据源冲突',
+  permissionMismatch: '权限冲突',
+  groupMismatch: '分组冲突',
+  exportPathMismatch: '导出路径冲突'
+}
 
-      return {
-        assetId: `${item.id}:${node.field.id}`,
-        templateId: item.id,
-        templateName: item.name,
-        templateCategory: item.category,
-        builtIn: item.builtIn,
-        owner: item.entry.asset?.owner || '未指定负责人',
-        fieldId: node.field.id,
-        label: node.field.label || node.field.id,
-        type: node.field.type,
-        businessCode: metadata.businessCode || '',
-        group: metadata.group || '',
-        dataSource: metadata.dataSource || '',
-        permission: metadata.permission || '',
-        exportPath: metadata.exportPath || '',
-        issueCount: issues.length,
-        issueText: issues.length ? issues.join(' / ') : '字段资产配置完整',
-        statusText: issues.length ? `${issues.length} 个待补项` : '可维护',
-        recommendedPresetLabels
-      }
+export function collectBusinessFieldTemplateAssets(
+  items: IBusinessFieldCenterTemplateItem[],
+  metadataFieldsById?: ITemplateMetadataFieldSnapshotMap
+): IBusinessMetadataTemplateFieldAsset[] {
+  return items.flatMap(item => {
+    const index = buildTemplateFieldRuntimeIndex(item.entry.schema, {
+      metadataFieldsById
     })
+    return index.all.map(node => ({
+      templateId: item.id,
+      templateName: item.name,
+      templateCategory: item.category,
+      fieldId: node.field.id,
+      fieldLabel: node.field.label || node.field.id,
+      metadata: node.metadata
+    }))
   })
+}
+
+function matchKeyword(field: IBusinessFieldCenterFieldAsset, keyword: string): boolean {
+  if (!keyword) return true
+  return [
+    field.label,
+    field.businessCode,
+    field.group,
+    field.dataSource,
+    field.permission,
+    field.exportPath,
+    ...field.templateNames
+  ].some(value => value.toLowerCase().includes(keyword))
+}
+
+function createFieldAsset(args: {
+  metadataField: IBusinessMetadataField
+  bindings: IBusinessMetadataTemplateBinding[]
+  candidates: IBusinessMetadataFieldCandidate[]
+  conflicts: IBusinessMetadataConflict[]
+  hospitalMappings: IBusinessMetadataHospitalFieldMapping[]
+}): IBusinessFieldCenterFieldAsset {
+  const { metadataField, bindings, candidates, conflicts, hospitalMappings } = args
+  const bindingCount = bindings.length
+  const hospitalMappingCount = hospitalMappings.length
+  const candidate = candidates.find(item => item.code === metadataField.code)
+  const candidateCount = Math.max((candidate?.usageCount ?? bindingCount) - bindingCount, 0)
+  const fieldConflicts = conflicts.filter(item => item.code === metadataField.code)
+  const issueText = fieldConflicts.length
+    ? fieldConflicts.map(item => CONFLICT_REASON_BADGE[item.reason]).join(' / ')
+    : '主数据配置完整'
+
+  return {
+    assetId: metadataField.id,
+    label: metadataField.name,
+    businessCode: metadataField.code,
+    group: metadataField.group,
+    dataSource: metadataField.dataSource,
+    permission: metadataField.permission,
+    exportPath: metadataField.exportPath,
+    issueCount: fieldConflicts.length,
+    issueText,
+    statusText: bindingCount ? `${bindingCount} 处引用` : '未绑定模板字段',
+    bindingCount,
+    candidateCount,
+    hospitalMappingCount,
+    hospitalMappingText: hospitalMappingCount
+      ? `${hospitalMappingCount} 个医院映射`
+      : '未配置医院映射',
+    templateIds: Array.from(new Set(bindings.map(item => item.templateId))),
+    templateNames: Array.from(new Set(bindings.map(item => item.templateName))),
+    recommendedPresetLabels: recommendBusinessFieldQuickPresets({
+      id: metadataField.code,
+      label: metadataField.name,
+      metadata: {
+        metadataFieldId: metadataField.id,
+        businessCode: metadataField.code,
+        group: metadataField.group,
+        dataSource: metadataField.dataSource,
+        permission: metadataField.permission,
+        exportPath: metadataField.exportPath,
+        tags: metadataField.tags
+      }
+    }).map(item => item.label)
+  }
 }
 
 export function buildBusinessFieldCenterViewModel(args: {
   items: IBusinessFieldCenterTemplateItem[]
   adapters: ITemplateDataAdapter[]
   filters: IBusinessFieldCenterFilters
+  metadataFields?: IBusinessMetadataField[]
+  bindings?: IBusinessMetadataTemplateBinding[]
+  hospitalMappings?: IBusinessMetadataHospitalFieldMapping[]
+  candidates?: IBusinessMetadataFieldCandidate[]
+  conflicts?: IBusinessMetadataConflict[]
 }): IBusinessFieldCenterViewModel {
-  const { items, adapters, filters } = args
-  const allFields = createFieldAssets(items)
+  const {
+    items,
+    adapters,
+    filters,
+    metadataFields = [],
+    bindings = [],
+    hospitalMappings = [],
+    candidates = [],
+    conflicts = []
+  } = args
+
+  const allFields = metadataFields.map(metadataField => {
+    return createFieldAsset({
+      metadataField,
+      bindings: bindings.filter(item => item.metadataFieldId === metadataField.id),
+      candidates,
+      conflicts,
+      hospitalMappings: hospitalMappings.filter(
+        item => item.metadataFieldId === metadataField.id
+      )
+    })
+  })
+
   const keyword = filters.keyword.trim().toLowerCase()
+  const itemById = new Map(items.map(item => [item.id, item]))
   const filteredFields = allFields.filter(field => {
-    if (filters.scope === 'editable' && field.builtIn) return false
-    if (filters.scope === 'builtin' && !field.builtIn) return false
     if (filters.group && field.group !== filters.group) return false
     if (filters.dataSource && field.dataSource !== filters.dataSource) return false
     if (filters.permission && field.permission !== filters.permission) return false
-    if (!keyword) return true
-    return [
-      field.templateName,
-      field.templateCategory,
-      field.fieldId,
-      field.label,
-      field.businessCode,
-      field.group,
-      field.dataSource,
-      field.permission,
-      field.exportPath
-    ].some(value => value.toLowerCase().includes(keyword))
+    return matchKeyword(field, keyword)
   })
 
-  const maintainedCount = allFields.filter(field => {
-    return Boolean(
-      field.group
-      && field.dataSource
-      && field.permission
-      && (field.businessCode || field.exportPath)
-    )
-  }).length
+  const pendingCandidates = candidates
+    .map(candidate => {
+      const linkedField = metadataFields.find(field => field.code === candidate.code)
+      const editableTemplateIds = candidate.templateIds.filter(templateId => {
+        const item = itemById.get(templateId)
+        return item ? !item.builtIn : true
+      })
+      const templateNames = editableTemplateIds.map(templateId => {
+        return itemById.get(templateId)?.name || templateId
+      })
+      const bindingCount = linkedField
+        ? bindings.filter(item => item.metadataFieldId === linkedField.id).length
+        : 0
+      const pendingUsageCount = linkedField
+        ? Math.max(editableTemplateIds.length - bindingCount, 0)
+        : editableTemplateIds.length
+
+      return {
+        code: candidate.code,
+        name: candidate.name,
+        group: candidate.group,
+        dataSource: candidate.dataSource,
+        permission: candidate.permission,
+        exportPath: candidate.exportPath,
+        usageCount: candidate.usageCount,
+        pendingUsageCount,
+        templateIds: editableTemplateIds,
+        templateNames,
+        metadataFieldId: linkedField?.id,
+        metadataFieldName: linkedField?.name
+      }
+    })
+    .filter(candidate => {
+      if (!candidate.pendingUsageCount) return false
+      if (filters.group && candidate.group !== filters.group) return false
+      if (filters.dataSource && candidate.dataSource !== filters.dataSource) {
+        return false
+      }
+      if (filters.permission && candidate.permission !== filters.permission) {
+        return false
+      }
+      if (!keyword) return true
+
+      return [
+        candidate.name,
+        candidate.code,
+        candidate.group,
+        candidate.dataSource,
+        candidate.permission,
+        candidate.exportPath,
+        ...candidate.templateNames
+      ].some(value => value.toLowerCase().includes(keyword))
+    })
+    .sort((left, right) => {
+      if (left.pendingUsageCount !== right.pendingUsageCount) {
+        return right.pendingUsageCount - left.pendingUsageCount
+      }
+      return left.name.localeCompare(right.name, 'zh-CN')
+    })
 
   const groups = Array.from(
-    new Set(allFields.map(field => field.group).filter(Boolean))
+    new Set(metadataFields.map(field => field.group).filter(Boolean))
   ).sort((a, b) => a.localeCompare(b, 'zh-CN'))
   const dataSources = Array.from(
-    new Set(allFields.map(field => field.dataSource).filter(Boolean))
+    new Set(metadataFields.map(field => field.dataSource).filter(Boolean))
   ).sort((a, b) => a.localeCompare(b, 'zh-CN'))
   const permissions = Array.from(
-    new Set(allFields.map(field => field.permission).filter(Boolean))
+    new Set(metadataFields.map(field => field.permission).filter(Boolean))
   ).sort((a, b) => a.localeCompare(b, 'zh-CN'))
 
+  const totalUsageCount = candidates.reduce((sum, item) => sum + item.usageCount, 0)
   const averageCoverage = items.length
     ? Math.round(
         items.reduce(
@@ -199,8 +334,12 @@ export function buildBusinessFieldCenterViewModel(args: {
   return {
     summary: {
       adapterCount: adapters.length,
+      masterFieldText: `${filteredFields.length}/${allFields.length}`,
+      boundFieldText: `${bindings.length}/${totalUsageCount || bindings.length}`,
+      candidateFieldCount: candidates.length,
+      conflictCount: conflicts.length,
       fieldAssetText: `${filteredFields.length}/${allFields.length}`,
-      maintainedFieldText: `${maintainedCount}/${allFields.length}`,
+      maintainedFieldText: `${bindings.length}/${totalUsageCount || bindings.length}`,
       dataSourceCount: dataSources.length,
       groupCount: groups.length
     },
@@ -225,18 +364,13 @@ export function buildBusinessFieldCenterViewModel(args: {
         if (left.issueCount !== right.issueCount) {
           return right.issueCount - left.issueCount
         }
-        return left.templateName.localeCompare(right.templateName, 'zh-CN')
-      })
-      .slice(0, 24),
-    risks: items
-      .filter(item =>
-        item.admissionReport.issues.some(issue => issue.category === 'dataBinding')
-      )
-      .slice(0, 8)
-      .map(item => ({
-        name: item.name,
-        badgeText: `${item.admissionReport.dataBindingCoverage}%`,
-        detail: `${item.admissionReport.issues.filter(issue => issue.category === 'dataBinding').length} 个绑定问题 / 平均覆盖 ${averageCoverage}%`
-      }))
+        return left.label.localeCompare(right.label, 'zh-CN')
+      }),
+    pendingCandidates,
+    risks: conflicts.map(conflict => ({
+      code: conflict.code,
+      badgeText: CONFLICT_REASON_BADGE[conflict.reason],
+      detail: `${conflict.templateIds.length} 个模板字段命中 / 平均覆盖 ${averageCoverage}%`
+    }))
   }
 }

@@ -186,6 +186,52 @@ describe('template runtime', () => {
     expect(index.byTag.get('clinical')?.map(node => node.field.id)).toEqual(['chiefComplaint', 'pulse'])
   })
 
+  it('buildTemplateFieldRuntimeIndex 支持通过主数据快照重写业务索引', () => {
+    const snapshotSchema: ITemplateSchema = {
+      version: '1.0.0',
+      id: 'snapshot-template',
+      name: '主数据快照模板',
+      blocks: [
+        {
+          type: 'fieldRow',
+          fields: [
+            {
+              id: 'patientName',
+              type: 'text',
+              label: '患者姓名',
+              metadata: {
+                metadataFieldId: 'meta-1',
+                businessCode: 'legacy.patient.name',
+                group: 'legacy',
+                dataSource: 'legacy.patient',
+                permission: 'legacy.read',
+                exportPath: 'legacy.patient.name'
+              }
+            }
+          ]
+        }
+      ]
+    }
+
+    const index = buildTemplateFieldRuntimeIndex(snapshotSchema, {
+      metadataFieldsById: {
+        'meta-1': {
+          id: 'meta-1',
+          code: 'patient.name',
+          name: '患者姓名',
+          group: '基本信息',
+          dataSource: 'his.patient',
+          permission: 'patient.read.basic',
+          exportPath: 'patient.name'
+        }
+      }
+    })
+
+    expect(index.byBusinessCode.get('patient.name')?.[0].field.id).toBe('patientName')
+    expect(index.byGroup.get('基本信息')?.[0].field.id).toBe('patientName')
+    expect(index.byDataSource.get('his.patient')?.[0].field.id).toBe('patientName')
+  })
+
   it('TemplateRuntime 支持批量写值、按元数据筛选取值和结构化导出', () => {
     const { editor, values } = createMockEditor({
       chiefComplaint: '胸痛3天',

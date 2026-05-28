@@ -36,6 +36,17 @@ import type { SelectionTarget } from './SchemaCanvas'
 
 export type PropertiesChangePhase = 'input' | 'commit'
 
+export interface ITemplateMetadataFieldBindingOption {
+  id: string
+  code: string
+  name: string
+  group: string
+  dataSource: string
+  permission: string
+  exportPath: string
+  tags?: string[]
+}
+
 export interface IPropertiesPanelOptions {
   onBlockChange: (
     blockIndex: number,
@@ -50,6 +61,7 @@ export interface IPropertiesPanelOptions {
   ) => void
   onAddField: (blockIndex: number) => void
   onLayoutChange?: (layout: ITemplateLayout, phase?: PropertiesChangePhase) => void
+  metadataFields?: ITemplateMetadataFieldBindingOption[]
 }
 
 const RULE_TYPE_COLORS: Record<string, string> = {
@@ -1463,9 +1475,63 @@ export class PropertiesPanel {
     onChange: (f: ITemplateField) => void
   ): HTMLDivElement {
     const metadata = field.metadata ?? {}
+    const metadataFields = this.options.metadataFields ?? []
+    const selectedMetadataField = metadata.metadataFieldId
+      ? metadataFields.find(item => item.id === metadata.metadataFieldId)
+      : undefined
     const listToText = (value?: string[]) => value?.join(', ') ?? ''
     const textToList = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean)
-    return card('业务元数据', [
+    const rows: HTMLElement[] = []
+
+    if (metadataFields.length) {
+      const bindingSelect = el('select', 'td-props__input')
+      const emptyOption = el('option')
+      emptyOption.value = ''
+      emptyOption.textContent = '未绑定主数据'
+      bindingSelect.append(emptyOption)
+      metadataFields.forEach(item => {
+        const option = el('option')
+        option.value = item.id
+        option.textContent = `${item.name} · ${item.code}`
+        bindingSelect.append(option)
+      })
+      bindingSelect.value = metadata.metadataFieldId ?? ''
+      bindingSelect.addEventListener('change', () => {
+        const nextMetadataField = metadataFields.find(
+          item => item.id === bindingSelect.value
+        )
+        onChange({
+          ...field,
+          metadata: {
+            ...metadata,
+            metadataFieldId: bindingSelect.value || undefined,
+            businessCode: nextMetadataField?.code ?? metadata.businessCode,
+            group: nextMetadataField?.group ?? metadata.group,
+            dataSource: nextMetadataField?.dataSource ?? metadata.dataSource,
+            permission: nextMetadataField?.permission ?? metadata.permission,
+            exportPath: nextMetadataField?.exportPath ?? metadata.exportPath,
+            tags: nextMetadataField?.tags ?? metadata.tags
+          }
+        })
+      })
+      rows.push(
+        row(
+          '主数据绑定',
+          bindingSelect,
+          '绑定后运行时优先采用字段主数据，当前字段保留本地元数据作为兼容回退。'
+        )
+      )
+
+      if (selectedMetadataField) {
+        rows.push(note(
+          `当前继承：${selectedMetadataField.name} / ${selectedMetadataField.code} / ${selectedMetadataField.group || '未分组'} / ${selectedMetadataField.dataSource || '未配置数据源'}`
+        ))
+      } else if (metadata.metadataFieldId) {
+        rows.push(note('当前绑定的主数据不存在，设计器将继续使用本地元数据回退。'))
+      }
+    }
+
+    rows.push(
       row('业务编码', textInput(metadata.businessCode ?? '', v =>
         onChange({ ...field, metadata: { ...metadata, businessCode: v || undefined } }), '如 patient.name'
       ), 'HIS/EHR 回填、规则条件和结构化导出的业务稳定键。'),
@@ -1487,7 +1553,13 @@ export class PropertiesPanel {
       row('业务标签', textInput(listToText(metadata.tags), v =>
         onChange({ ...field, metadata: { ...metadata, tags: textToList(v) } }), '逗号分隔'
       ))
-    ], '业务参数用于运行时回填、权限分桶、规则联动和结构化导出。')
+    )
+
+    return card(
+      '业务元数据',
+      rows,
+      '业务参数用于运行时回填、权限分桶、规则联动和结构化导出。'
+    )
   }
 
   // ── Block-level rules editor (section / group) ────────────────────────────

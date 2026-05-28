@@ -121,6 +121,7 @@ import {
   createTemplateRuntime,
   TemplateRuntime
 } from './template/TemplateRuntime'
+import { resolveTemplateFieldMetadata } from './template/TemplateFieldMetadataResolver'
 import { buildTemplateAdmissionReport } from './template/TemplateGovernance'
 import type {
   ITemplateAdmissionIssue,
@@ -171,6 +172,8 @@ import type {
   ITemplateField,
   ITemplateFieldValueRender,
   ITemplateFieldMetadata,
+  ITemplateMetadataFieldSnapshot,
+  ITemplateMetadataFieldSnapshotMap,
   ITemplateFieldRowBlock,
   ITemplateFieldSegment,
   ITemplateGroupBlock,
@@ -297,6 +300,7 @@ export {
   buildTemplateAdmissionReport,
   buildTemplateFieldRuntimeIndex,
   createTemplateRuntime,
+  resolveTemplateFieldMetadata,
   TemplateRuntime,
   createMockHisAdapter,
   templateDataAdapterRegistry,
@@ -379,6 +383,8 @@ export type {
   ITemplateField,
   ITemplateFieldValueRender,
   ITemplateFieldMetadata,
+  ITemplateMetadataFieldSnapshot,
+  ITemplateMetadataFieldSnapshotMap,
   ITemplateFieldRowBlock,
   ITemplateFieldSegment,
   ITemplateGroupBlock,

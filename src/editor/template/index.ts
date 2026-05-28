@@ -66,6 +66,7 @@ export interface ITemplateOption {
 }
 
 export interface ITemplateFieldMetadata {
+  metadataFieldId?: string
   businessCode?: string
   group?: string
   exportPath?: string
@@ -74,6 +75,22 @@ export interface ITemplateFieldMetadata {
   listeners?: string[]
   tags?: string[]
 }
+
+export interface ITemplateMetadataFieldSnapshot {
+  id: string
+  code: string
+  name: string
+  group: string
+  dataSource: string
+  permission: string
+  exportPath: string
+  tags?: string[]
+}
+
+export type ITemplateMetadataFieldSnapshotMap = Record<
+  string,
+  ITemplateMetadataFieldSnapshot
+>
 
 export type TemplateFieldValueRenderMode = 'plain' | 'list'
 

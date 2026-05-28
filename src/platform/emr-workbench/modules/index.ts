@@ -22,9 +22,11 @@ export {
 export {
   applyBusinessFieldQuickPreset,
   BusinessFieldCenterModule,
+  collectBusinessFieldTemplateAssets,
   getBusinessFieldQuickPresets,
   recommendBusinessFieldQuickPresets,
   type IBusinessFieldCenterFieldAsset,
+  type IBusinessFieldCenterPendingCandidate,
   buildBusinessFieldCenterViewModel,
   createBusinessFieldCenterView,
   type IBusinessFieldCenterFilters,
@@ -45,6 +47,17 @@ export {
   createMigrationPreviewCenterView,
   type IMigrationPreviewCenterViewModel
 } from './migration-preview-center'
+export {
+  HisIntegrationCenterModule,
+  buildHisIntegrationCenterViewModel,
+  createHisIntegrationCenterView,
+  type IHisIntegrationCenterConnector,
+  type IHisIntegrationCenterFieldDiagnostic,
+  type IHisIntegrationCenterSession,
+  type IHisIntegrationCenterTraceRecord,
+  type IHisIntegrationCenterViewModel,
+  type IHisIntegrationCenterViewOptions
+} from './his-integration-center'
 export {
   MedicalRecordDefectCenterModule,
   buildMedicalRecordDefectCenterViewModel,

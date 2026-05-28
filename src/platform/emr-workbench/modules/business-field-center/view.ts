@@ -1,4 +1,5 @@
 import type {
+  IBusinessFieldCenterPendingCandidate,
   IBusinessFieldCenterFieldAsset,
   IBusinessFieldCenterFilters,
   IBusinessFieldCenterViewModel
@@ -8,7 +9,10 @@ interface IBusinessFieldCenterViewOptions {
   getModel: () => IBusinessFieldCenterViewModel
   onUpdateFilters: (filters: Partial<IBusinessFieldCenterFilters>) => void
   onResetFilters: () => void
-  onQuickApplyField: (field: IBusinessFieldCenterFieldAsset, rerender: () => void) => void
+  onApplyCandidate: (
+    candidate: IBusinessFieldCenterPendingCandidate,
+    rerender: () => void
+  ) => void
   onMaintainField: (
     field: IBusinessFieldCenterFieldAsset,
     rerender: () => void
@@ -56,9 +60,9 @@ export function createBusinessFieldCenterView(
     summary.className = 'tm-version-center__summary'
     summary.innerHTML = `
       <div><span>适配器</span><strong>${model.summary.adapterCount}</strong></div>
-      <div><span>字段资产</span><strong>${model.summary.fieldAssetText}</strong></div>
-      <div><span>已纳管</span><strong>${model.summary.maintainedFieldText}</strong></div>
-      <div><span>分组 / 数据源</span><strong>${model.summary.groupCount}/${model.summary.dataSourceCount}</strong></div>
+      <div><span>主数据</span><strong>${model.summary.masterFieldText}</strong></div>
+      <div><span>已绑定</span><strong>${model.summary.boundFieldText}</strong></div>
+      <div><span>风险 / 分组</span><strong>${model.summary.conflictCount}/${model.summary.groupCount}</strong></div>
     `
     content.append(summary)
 
@@ -131,9 +135,54 @@ export function createBusinessFieldCenterView(
       content.append(item)
     })
 
+    if (model.pendingCandidates.length) {
+      const candidateTitle = document.createElement('div')
+      candidateTitle.className = 'tm-version-center__section-title'
+      candidateTitle.textContent = '待处理候选主数据'
+      content.append(candidateTitle)
+
+      const candidateList = document.createElement('div')
+      candidateList.className = 'tm-center-list'
+      model.pendingCandidates.forEach(candidate => {
+        const row = document.createElement('div')
+        row.className = 'tm-center-list__row'
+
+        const info = document.createElement('div')
+        info.className = 'tm-center-list__info'
+        const name = document.createElement('strong')
+        name.textContent = `${candidate.name} · ${candidate.code}`
+        const detail = document.createElement('small')
+        detail.textContent = `分组 ${candidate.group || '未分组'} / 数据源 ${candidate.dataSource || '未绑定'} / 权限 ${candidate.permission || '未标记'} / 导出 ${candidate.exportPath || '未配置'}`
+        const usage = document.createElement('small')
+        usage.textContent = candidate.metadataFieldName
+          ? `已命中主数据 ${candidate.metadataFieldName}，待补绑定 ${candidate.pendingUsageCount} 处 / 模板 ${candidate.templateNames.join('、')}`
+          : `待生成主数据并绑定 ${candidate.pendingUsageCount} 处 / 模板 ${candidate.templateNames.join('、')}`
+        info.append(name, detail, usage)
+
+        const actions = document.createElement('div')
+        actions.className = 'tm-center-inline'
+        const badge = document.createElement('span')
+        badge.className = 'tm-center-badge tm-center-badge--warning'
+        badge.textContent = candidate.metadataFieldId
+          ? `待绑定 ${candidate.pendingUsageCount}`
+          : `待纳管 ${candidate.pendingUsageCount}`
+        const applyBtn = document.createElement('button')
+        applyBtn.className = 'td-designer__btn td-designer__btn--compact td-designer__btn--primary'
+        applyBtn.textContent = candidate.metadataFieldId
+          ? '绑定现有主数据'
+          : '生成主数据并绑定'
+        applyBtn.onclick = () => options.onApplyCandidate(candidate, render)
+        actions.append(badge, applyBtn)
+
+        row.append(info, actions)
+        candidateList.append(row)
+      })
+      content.append(candidateList)
+    }
+
     const fieldTitle = document.createElement('div')
     fieldTitle.className = 'tm-version-center__section-title'
-    fieldTitle.textContent = '字段资产清单'
+    fieldTitle.textContent = '字段主数据清单'
     content.append(fieldTitle)
 
     if (!model.fields.length) {
@@ -150,16 +199,20 @@ export function createBusinessFieldCenterView(
         const info = document.createElement('div')
         info.className = 'tm-center-list__info'
         const name = document.createElement('strong')
-        name.textContent = `${field.label} · ${field.templateName}`
+        name.textContent = `${field.label} · ${field.businessCode}`
         const detail = document.createElement('small')
-        detail.textContent = `${field.fieldId} / 业务编码 ${field.businessCode || '未配置'} / 分组 ${field.group || '未分组'} / 数据源 ${field.dataSource || '未绑定'} / 权限 ${field.permission || '未标记'} / 导出 ${field.exportPath || '未配置'}`
-        const owner = document.createElement('small')
-        owner.textContent = `${field.templateCategory} / 负责人 ${field.owner} / ${field.issueText}`
+        detail.textContent = `分组 ${field.group || '未分组'} / 数据源 ${field.dataSource || '未绑定'} / 权限 ${field.permission || '未标记'} / 导出 ${field.exportPath || '未配置'}`
+        const usage = document.createElement('small')
+        usage.textContent = field.templateNames.length
+          ? `引用模板：${field.templateNames.join('、')} / ${field.issueText}`
+          : `引用模板：暂无 / ${field.issueText}`
+        const mapping = document.createElement('small')
+        mapping.textContent = `医院映射：${field.hospitalMappingText}`
         const recommendation = document.createElement('small')
         recommendation.textContent = field.recommendedPresetLabels.length
           ? `智能推荐：${field.recommendedPresetLabels.join('、')}`
           : '智能推荐：暂无明显命中，可手动选择字段快配'
-        info.append(name, detail, owner, recommendation)
+        info.append(name, detail, usage, mapping, recommendation)
 
         const actions = document.createElement('div')
         actions.className = 'tm-center-inline'
@@ -171,21 +224,16 @@ export function createBusinessFieldCenterView(
         const locateBtn = document.createElement('button')
         locateBtn.className = 'td-designer__btn td-designer__btn--compact'
         locateBtn.textContent = '定位模板'
-        locateBtn.onclick = () => options.onOpenTemplate(field.templateId)
-        const quickBtn = document.createElement('button')
-        quickBtn.className = 'td-designer__btn td-designer__btn--compact td-designer__btn--primary'
-        quickBtn.textContent = field.builtIn ? '快配只读' : '字段快配'
-        if (field.recommendedPresetLabels[0]) {
-          quickBtn.title = `推荐预设：${field.recommendedPresetLabels.join('、')}`
+        locateBtn.disabled = !field.templateIds.length
+        locateBtn.onclick = () => {
+          const templateId = field.templateIds[0]
+          if (templateId) options.onOpenTemplate(templateId)
         }
-        quickBtn.disabled = field.builtIn
-        quickBtn.onclick = () => options.onQuickApplyField(field, render)
         const maintainBtn = document.createElement('button')
         maintainBtn.className = 'td-designer__btn td-designer__btn--compact'
-        maintainBtn.textContent = field.builtIn ? '内置只读' : '维护字段'
-        maintainBtn.disabled = field.builtIn
+        maintainBtn.textContent = '维护主数据'
         maintainBtn.onclick = () => options.onMaintainField(field, render)
-        actions.append(badge, locateBtn, quickBtn, maintainBtn)
+        actions.append(badge, locateBtn, maintainBtn)
 
         row.append(info, actions)
         fieldList.append(row)
@@ -207,7 +255,7 @@ export function createBusinessFieldCenterView(
         const badge = document.createElement('span')
         badge.textContent = risk.badgeText
         const name = document.createElement('strong')
-        name.textContent = risk.name
+        name.textContent = risk.code
         const detail = document.createElement('small')
         detail.textContent = risk.detail
         row.append(badge, name, detail)

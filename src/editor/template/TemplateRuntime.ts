@@ -5,9 +5,11 @@ import type {
   ITemplateBlock,
   ITemplateField,
   ITemplateFieldMetadata,
+  ITemplateMetadataFieldSnapshotMap,
   ITemplateSchema
 } from './index'
 import { getResolvedTemplateBlocks } from './index'
+import { resolveTemplateFieldMetadata } from './TemplateFieldMetadataResolver'
 import {
   extractTemplateValues,
   type ITemplateExtractResult
@@ -59,6 +61,10 @@ export interface ITemplateFieldSelector {
   dataSource?: string
   listener?: string
   tag?: string
+}
+
+export interface IBuildTemplateFieldRuntimeIndexOptions {
+  metadataFieldsById?: ITemplateMetadataFieldSnapshotMap
 }
 
 export interface ITemplateRuntimeValuePatch {
@@ -241,40 +247,46 @@ function addFieldNode(
   field: ITemplateField,
   zone: 'header' | 'main' | 'footer',
   containerBlockIds: string[],
+  options: IBuildTemplateFieldRuntimeIndexOptions,
   sectionId?: string,
   groupId?: string,
   tableId?: string,
   tableColumnHeader?: string
 ) {
+  const metadata = resolveTemplateFieldMetadata(
+    field.metadata,
+    options.metadataFieldsById
+  )
   const node: ITemplateFieldRuntimeNode = {
     field,
-    metadata: field.metadata,
+    metadata,
     zone,
     containerBlockIds,
     sectionId,
     groupId,
     tableId,
     tableColumnHeader,
-    exportPath: field.metadata?.exportPath
+    exportPath: metadata?.exportPath
   }
   index.all.push(node)
   index.byId.set(field.id, node)
   containerBlockIds.forEach(id => appendMapValue(index.byBlockId, id, node))
   appendMapValue(index.bySectionId, sectionId, node)
-  appendMapValue(index.byGroup, field.metadata?.group, node)
+  appendMapValue(index.byGroup, metadata?.group, node)
   appendMapValue(index.byTableId, tableId, node)
-  appendMapValue(index.byBusinessCode, field.metadata?.businessCode, node)
-  appendMapValue(index.byPermission, field.metadata?.permission, node)
-  appendMapValue(index.byDataSource, field.metadata?.dataSource, node)
-  appendMapValues(index.byListener, field.metadata?.listeners, node)
-  appendMapValues(index.byTag, field.metadata?.tags, node)
-  appendMapValue(index.byExportPath, field.metadata?.exportPath, node)
+  appendMapValue(index.byBusinessCode, metadata?.businessCode, node)
+  appendMapValue(index.byPermission, metadata?.permission, node)
+  appendMapValue(index.byDataSource, metadata?.dataSource, node)
+  appendMapValues(index.byListener, metadata?.listeners, node)
+  appendMapValues(index.byTag, metadata?.tags, node)
+  appendMapValue(index.byExportPath, metadata?.exportPath, node)
 }
 
 function walkTemplateBlocks(
   blocks: ITemplateBlock[],
   zone: 'header' | 'main' | 'footer',
   index: ITemplateFieldRuntimeIndex,
+  options: IBuildTemplateFieldRuntimeIndexOptions,
   context: {
     containerBlockIds: string[]
     sectionId?: string
@@ -285,7 +297,15 @@ function walkTemplateBlocks(
   blocks.forEach((block, blockIndex) => {
     if (block.type === 'fieldRow') {
       block.fields.forEach(field => {
-        addFieldNode(index, field, zone, context.containerBlockIds, context.sectionId, context.groupId)
+        addFieldNode(
+          index,
+          field,
+          zone,
+          context.containerBlockIds,
+          options,
+          context.sectionId,
+          context.groupId
+        )
       })
       return
     }
@@ -293,7 +313,15 @@ function walkTemplateBlocks(
     if (block.type === 'paragraph') {
       block.segments.forEach(segment => {
         if (segment.type === 'field') {
-          addFieldNode(index, segment.field, zone, context.containerBlockIds, context.sectionId, context.groupId)
+          addFieldNode(
+            index,
+            segment.field,
+            zone,
+            context.containerBlockIds,
+            options,
+            context.sectionId,
+            context.groupId
+          )
         }
       })
       return
@@ -308,6 +336,7 @@ function walkTemplateBlocks(
             column.field,
             zone,
             context.containerBlockIds,
+            options,
             context.sectionId,
             context.groupId,
             tableId,
@@ -323,7 +352,7 @@ function walkTemplateBlocks(
       const containerBlockIds = block.id
         ? [...context.containerBlockIds, block.id]
         : context.containerBlockIds
-      walkTemplateBlocks(block.blocks, zone, index, {
+      walkTemplateBlocks(block.blocks, zone, index, options, {
         containerBlockIds,
         sectionId: block.id ?? context.sectionId,
         groupId: context.groupId,
@@ -337,7 +366,7 @@ function walkTemplateBlocks(
       const containerBlockIds = block.id
         ? [...context.containerBlockIds, block.id]
         : context.containerBlockIds
-      walkTemplateBlocks(block.blocks, zone, index, {
+      walkTemplateBlocks(block.blocks, zone, index, options, {
         containerBlockIds,
         sectionId: context.sectionId,
         groupId: block.id ?? context.groupId,
@@ -348,7 +377,8 @@ function walkTemplateBlocks(
 }
 
 export function buildTemplateFieldRuntimeIndex(
-  schema: ITemplateSchema
+  schema: ITemplateSchema,
+  options: IBuildTemplateFieldRuntimeIndexOptions = {}
 ): ITemplateFieldRuntimeIndex {
   const resolved = getResolvedTemplateBlocks(schema)
   const index: ITemplateFieldRuntimeIndex = {
@@ -366,9 +396,18 @@ export function buildTemplateFieldRuntimeIndex(
     byExportPath: new Map()
   }
 
-  walkTemplateBlocks(resolved.header, 'header', index, { containerBlockIds: [], path: 'header' })
-  walkTemplateBlocks(resolved.main, 'main', index, { containerBlockIds: [], path: 'main' })
-  walkTemplateBlocks(resolved.footer, 'footer', index, { containerBlockIds: [], path: 'footer' })
+  walkTemplateBlocks(resolved.header, 'header', index, options, {
+    containerBlockIds: [],
+    path: 'header'
+  })
+  walkTemplateBlocks(resolved.main, 'main', index, options, {
+    containerBlockIds: [],
+    path: 'main'
+  })
+  walkTemplateBlocks(resolved.footer, 'footer', index, options, {
+    containerBlockIds: [],
+    path: 'footer'
+  })
 
   return index
 }
