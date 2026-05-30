@@ -24,6 +24,8 @@ import {
   MedicalRecordDefectCenterModule,
   MedicalRecordOperationsCenterModule,
   MedicalRecordQualityCenterModule,
+  type IMedicalRecordArchiveRequirements,
+  type IMedicalRecordTerminalQualitySummary,
   MigrationPreviewCenterModule,
   type IBusinessFieldCenterPendingCandidate,
   type IBusinessFieldCenterFieldAsset,
@@ -188,6 +190,15 @@ function resolveDecorationPreviewText(
   return Object.entries(replacements).reduce((result, [token, value]) => {
     return result.split(token).join(value)
   }, text)
+}
+
+function resolveTerminalQualityGrade(
+  score: number
+): IMedicalRecordTerminalQualitySummary['grade'] {
+  if (score >= 90) return 'A'
+  if (score >= 80) return 'B'
+  if (score >= 70) return 'C'
+  return 'D'
 }
 
 function getDecorationBlockSummary(
@@ -2453,12 +2464,57 @@ export class TemplateManager {
     }
   }
 
+  private _getMedicalRecordArchiveRequirements(): IMedicalRecordArchiveRequirements {
+    return {
+      requireHomepage: true,
+      requireCoding: true,
+      requireAttachments: true
+    }
+  }
+
+  private _buildMedicalRecordTerminalQualityResults(
+    documents: ITemplateDocumentRecord[]
+  ): Record<string, IMedicalRecordTerminalQualitySummary> {
+    const qualityModel = buildMedicalRecordQualityViewModel({
+      documents,
+      domain: this._createMedicalRecordOperationsDomain()
+    })
+    return Object.fromEntries(qualityModel.items.map(item => {
+      const score = Math.max(
+        0,
+        100 - item.blockerCount * 15 - item.warningCount * 5
+      )
+      return [
+        item.id,
+        {
+          conclusion: item.blockerCount > 0
+            ? 'blocked'
+            : item.warningCount > 0
+              ? 'warning'
+              : 'passed',
+          score,
+          grade: resolveTerminalQualityGrade(score)
+        }
+      ]
+    }))
+  }
+
+  private _buildMedicalRecordArchiveGate(documents: ITemplateDocumentRecord[]) {
+    return {
+      terminalQualityResults: this._buildMedicalRecordTerminalQualityResults(documents),
+      archiveRequirements: this._getMedicalRecordArchiveRequirements()
+    }
+  }
+
   private _openMedicalRecordOperationsCenter() {
-    this._syncMedicalRecordDefects()
+    const documents = this._syncMedicalRecordDefects()
+    const archiveGate = this._buildMedicalRecordArchiveGate(documents)
     const content = this.medicalRecordOperationsCenter.createDialogContent({
-      documents: this.medicalRecordDomain.list(),
+      documents,
       domain: this._createMedicalRecordOperationsDomain(),
       defects: this.medicalRecordDefectDomain.list(),
+      terminalQualityResults: archiveGate.terminalQualityResults,
+      archiveRequirements: archiveGate.archiveRequirements,
       onOpenTrace: documentId => this._openMedicalRecordTimeline(documentId),
       onOpenDefectCenter: () => this._openMedicalRecordDefectCenter(),
       onOpenArchiveCenter: () => this._openMedicalRecordArchiveCenter()
@@ -2610,9 +2666,13 @@ export class TemplateManager {
   }
 
   private _openMedicalRecordArchiveCenter() {
+    const documents = this._syncMedicalRecordDefects()
+    const archiveGate = this._buildMedicalRecordArchiveGate(documents)
     const content = this.medicalRecordArchiveCenter.createDialogContent({
-      documents: this.medicalRecordDomain.list(),
+      documents,
       domain: this._createMedicalRecordOperationsDomain(),
+      terminalQualityResults: archiveGate.terminalQualityResults,
+      archiveRequirements: archiveGate.archiveRequirements,
       onArchive: documentId => this._archiveMedicalRecord(documentId),
       onOpenTrace: documentId => this._openMedicalRecordTimeline(documentId),
       onOpenReadonly: documentId => this._openMedicalRecordReadonlyPreview(documentId),
@@ -2634,9 +2694,13 @@ export class TemplateManager {
   private async _archiveMedicalRecord(documentId: string) {
     const record = this.medicalRecordDomain.findDocument(documentId)
     if (!record) return
+    this._syncMedicalRecordDefects()
+    const archiveGate = this._buildMedicalRecordArchiveGate([record])
     const archiveModel = buildMedicalRecordArchiveCenterViewModel({
       documents: [record],
-      domain: this._createMedicalRecordOperationsDomain()
+      domain: this._createMedicalRecordOperationsDomain(),
+      terminalQualityResults: archiveGate.terminalQualityResults,
+      archiveRequirements: archiveGate.archiveRequirements
     })
     const archiveItem = archiveModel.items[0]
     if (!archiveItem?.canArchive) {

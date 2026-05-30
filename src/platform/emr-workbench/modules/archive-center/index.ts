@@ -10,6 +10,8 @@ export class MedicalRecordArchiveCenterModule {
     documents: ITemplateDocumentRecord[]
     domain: Parameters<typeof buildMedicalRecordArchiveCenterViewModel>[0]['domain']
     rulePackages?: Parameters<typeof buildMedicalRecordArchiveCenterViewModel>[0]['rulePackages']
+    terminalQualityResults?: Parameters<typeof buildMedicalRecordArchiveCenterViewModel>[0]['terminalQualityResults']
+    archiveRequirements?: Parameters<typeof buildMedicalRecordArchiveCenterViewModel>[0]['archiveRequirements']
     now?: Parameters<typeof buildMedicalRecordArchiveCenterViewModel>[0]['now']
     onArchive?: IMedicalRecordArchiveCenterViewOptions['onArchive']
     onOpenTrace?: IMedicalRecordArchiveCenterViewOptions['onOpenTrace']
@@ -22,6 +24,8 @@ export class MedicalRecordArchiveCenterModule {
         documents: args.documents,
         domain: args.domain,
         rulePackages: args.rulePackages,
+        terminalQualityResults: args.terminalQualityResults,
+        archiveRequirements: args.archiveRequirements,
         now: args.now
       }),
       onArchive: args.onArchive,
@@ -40,8 +44,10 @@ export type {
   IMedicalRecordArchiveCenterViewModel,
   IMedicalRecordArchiveChecklistItem,
   IMedicalRecordArchiveDomain,
+  IMedicalRecordArchiveRequirements,
   IMedicalRecordArchiveItem,
   IMedicalRecordArchiveRevisionSummary,
+  IMedicalRecordTerminalQualitySummary,
   MedicalRecordArchiveStatus
 } from './service'
 export {

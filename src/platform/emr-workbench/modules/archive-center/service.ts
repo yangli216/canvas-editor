@@ -20,6 +20,18 @@ export interface IMedicalRecordArchiveRevisionSummary {
   latestUpdatedAt?: number
 }
 
+export interface IMedicalRecordTerminalQualitySummary {
+  conclusion: 'passed' | 'warning' | 'blocked'
+  score: number
+  grade: 'A' | 'B' | 'C' | 'D'
+}
+
+export interface IMedicalRecordArchiveRequirements {
+  requireHomepage?: boolean
+  requireCoding?: boolean
+  requireAttachments?: boolean
+}
+
 export interface IMedicalRecordArchiveDomain extends IMedicalRecordQualityTraceDomain {
   getPostArchiveRevisions?: (documentId?: string) => IMedicalRecordPostArchiveRevisionRequest[]
   getPostArchiveRevisionSummary?: (documentId: string) => IMedicalRecordArchiveRevisionSummary
@@ -107,6 +119,56 @@ function hasStructuredExport(record: ITemplateDocumentRecord) {
   )
 }
 
+function hasNonEmptyValue(value: unknown) {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') return value.trim().length > 0
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>).length > 0
+  }
+  return true
+}
+
+function hasStructuredValue(record: ITemplateDocumentRecord, key: string) {
+  const structuredValues = record.content.structuredValues ?? {}
+  return Object.prototype.hasOwnProperty.call(structuredValues, key)
+    && hasNonEmptyValue(structuredValues[key])
+}
+
+function createTerminalQualityCheck(
+  terminalQuality?: IMedicalRecordTerminalQualitySummary
+): IMedicalRecordArchiveChecklistItem {
+  const passed = terminalQuality?.conclusion === 'passed'
+    || terminalQuality?.conclusion === 'warning'
+  return {
+    id: 'terminal-quality',
+    label: '终末质控',
+    passed,
+    level: 'blocker',
+    detail: terminalQuality
+      ? `结论 ${terminalQuality.conclusion}，${terminalQuality.score} 分，${terminalQuality.grade} 级`
+      : '缺少终末质控结论',
+    actionHint: '需完成终末质控且未阻断后再归档'
+  }
+}
+
+function createStructuredRequirementCheck(
+  record: ITemplateDocumentRecord,
+  key: string,
+  label: string,
+  actionHint: string
+): IMedicalRecordArchiveChecklistItem {
+  const passed = hasStructuredValue(record, key)
+  return {
+    id: key,
+    label,
+    passed,
+    level: 'blocker',
+    detail: passed ? `已具备${label}` : `缺少${label}`,
+    actionHint
+  }
+}
+
 function buildChecklist(args: {
   record: ITemplateDocumentRecord
   timeline: ITemplateDocumentTraceEvent[]
@@ -115,6 +177,9 @@ function buildChecklist(args: {
   qualityBlockerCount: number
   qualityWarningCount: number
   openDefectCount: number
+  terminalQuality?: IMedicalRecordTerminalQualitySummary
+  includeTerminalQuality: boolean
+  archiveRequirements?: IMedicalRecordArchiveRequirements
 }): IMedicalRecordArchiveChecklistItem[] {
   const { record } = args
   const hasTemplateSnapshot = Boolean(
@@ -130,7 +195,7 @@ function buildChecklist(args: {
   const qualityBlockersCleared = args.qualityBlockerCount === 0
   const defectsClosed = args.openDefectCount === 0
 
-  return [
+  const checklist: IMedicalRecordArchiveChecklistItem[] = [
     {
       id: 'quality-blockers',
       label: '质控阻断项',
@@ -198,6 +263,37 @@ function buildChecklist(args: {
       actionHint: '警告项不阻断归档，但建议归档前确认'
     }
   ]
+
+  if (args.includeTerminalQuality) {
+    checklist.push(createTerminalQualityCheck(args.terminalQuality))
+  }
+
+  if (args.archiveRequirements?.requireHomepage) {
+    checklist.push(createStructuredRequirementCheck(
+      record,
+      'homepage',
+      '病案首页',
+      '请先生成或补全病案首页结构化数据'
+    ))
+  }
+  if (args.archiveRequirements?.requireCoding) {
+    checklist.push(createStructuredRequirementCheck(
+      record,
+      'coding',
+      '诊疗编码',
+      '请先完成诊断和手术操作编码'
+    ))
+  }
+  if (args.archiveRequirements?.requireAttachments) {
+    checklist.push(createStructuredRequirementCheck(
+      record,
+      'attachments',
+      '归档附件',
+      '请先补齐归档所需附件'
+    ))
+  }
+
+  return checklist
 }
 
 function resolveArchiveStatus(
@@ -224,6 +320,8 @@ export function buildMedicalRecordArchiveCenterViewModel(args: {
   documents: ITemplateDocumentRecord[]
   domain: IMedicalRecordArchiveDomain
   rulePackages?: IMedicalRecordQualityRulePackage[]
+  terminalQualityResults?: Record<string, IMedicalRecordTerminalQualitySummary>
+  archiveRequirements?: IMedicalRecordArchiveRequirements
   now?: number
 }): IMedicalRecordArchiveCenterViewModel {
   const qualityModel = buildMedicalRecordQualityViewModel({
@@ -254,7 +352,10 @@ export function buildMedicalRecordArchiveCenterViewModel(args: {
       reviewCount: summary?.reviewCount ?? 0,
       qualityBlockerCount: blockerCount,
       qualityWarningCount: warningCount,
-      openDefectCount
+      openDefectCount,
+      terminalQuality: args.terminalQualityResults?.[record.id],
+      includeTerminalQuality: Boolean(args.terminalQualityResults),
+      archiveRequirements: args.archiveRequirements
     })
     const archiveStatus = resolveArchiveStatus(record, blockerCount, revisionSummary)
 

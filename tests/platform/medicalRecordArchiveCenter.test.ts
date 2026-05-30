@@ -308,6 +308,101 @@ describe('medical record archive center view model', () => {
     expect(model.items[0].checklist.find(item => item.id === 'defect-closure')?.detail).toContain('1 个缺陷')
   })
 
+  it('终末质控阻断和归档必备资料缺失时不允许归档', () => {
+    const record = createRecord({ id: 'record-terminal-quality', status: 'signed' })
+    const domain = createDomain({
+      'record-terminal-quality': {
+        firstWrittenAt: 1000,
+        lastWrittenAt: 1000,
+        writers: ['王医生'],
+        signCount: 1,
+        reviewCount: 1
+      }
+    }, {
+      'record-terminal-quality': [
+        createTrace({ action: 'writing_save', timestamp: 1000 }),
+        createTrace({ action: 'sign', timestamp: 1200 }),
+        createTrace({ action: 'review', timestamp: 1400 })
+      ]
+    })
+
+    const model = buildMedicalRecordArchiveCenterViewModel({
+      documents: [record],
+      domain,
+      terminalQualityResults: {
+        'record-terminal-quality': {
+          conclusion: 'blocked',
+          score: 75,
+          grade: 'D'
+        }
+      },
+      archiveRequirements: {
+        requireHomepage: true,
+        requireCoding: true,
+        requireAttachments: true
+      },
+      now: 2000
+    })
+
+    expect(model.items[0].canArchive).toBe(false)
+    expect(model.items[0].checklist.map(item => item.id)).toEqual(expect.arrayContaining([
+      'terminal-quality',
+      'homepage',
+      'coding',
+      'attachments'
+    ]))
+  })
+
+  it('归档必备结构化资料为空值时不允许归档', () => {
+    const record = createRecord({
+      id: 'record-empty-required-structured-values',
+      status: 'signed',
+      content: {
+        flatValues: {
+          chiefComplaint: '咳嗽三天',
+          diagnosis: '肺炎'
+        },
+        structuredValues: {
+          homepage: null,
+          coding: {},
+          attachments: []
+        }
+      }
+    })
+    const domain = createDomain({
+      'record-empty-required-structured-values': {
+        firstWrittenAt: 1000,
+        lastWrittenAt: 1000,
+        writers: ['王医生'],
+        signCount: 1,
+        reviewCount: 1
+      }
+    }, {
+      'record-empty-required-structured-values': [
+        createTrace({ action: 'writing_save', timestamp: 1000 }),
+        createTrace({ action: 'sign', timestamp: 1200 }),
+        createTrace({ action: 'review', timestamp: 1400 })
+      ]
+    })
+
+    const model = buildMedicalRecordArchiveCenterViewModel({
+      documents: [record],
+      domain,
+      archiveRequirements: {
+        requireHomepage: true,
+        requireCoding: true,
+        requireAttachments: true
+      },
+      now: 2000
+    })
+    const checklist = model.items[0].checklist
+
+    expect(checklist.find(item => item.id === 'homepage')?.passed).toBe(false)
+    expect(checklist.find(item => item.id === 'coding')?.passed).toBe(false)
+    expect(checklist.find(item => item.id === 'attachments')?.passed).toBe(false)
+    expect(model.items[0].canArchive).toBe(false)
+  })
+
   it('归档后修订申请生成差异和时间线但不覆盖归档快照', () => {
     const store = new TemplateDocumentStore(
       `canvas-editor:post-archive-revision:${Date.now()}`,

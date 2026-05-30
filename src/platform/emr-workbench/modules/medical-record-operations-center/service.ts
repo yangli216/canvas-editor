@@ -5,8 +5,10 @@ import type {
 } from '../../domain'
 import {
   buildMedicalRecordArchiveCenterViewModel,
+  type IMedicalRecordArchiveRequirements,
   type IMedicalRecordArchiveDomain,
-  type IMedicalRecordArchiveItem
+  type IMedicalRecordArchiveItem,
+  type IMedicalRecordTerminalQualitySummary
 } from '../archive-center'
 import {
   buildMedicalRecordQualityViewModel,
@@ -89,6 +91,21 @@ function getBlockerReasonText(item: IMedicalRecordArchiveItem) {
   return blockers.length ? blockers.join('、') : '无阻断项'
 }
 
+const OPEN_DEFECT_STATUSES: MedicalRecordDefectStatus[] = [
+  'open',
+  'returned',
+  'secondReturned',
+  'rectified',
+  'appealing'
+]
+
+const RETURNED_RECTIFICATION_STATUSES: MedicalRecordDefectStatus[] = [
+  'returned',
+  'secondReturned',
+  'rectified',
+  'appealing'
+]
+
 function createQueueItems(args: {
   queue: MedicalRecordOperationQueue
   documentIds: string[]
@@ -131,6 +148,8 @@ export function buildMedicalRecordOperationsCenterViewModel(args: {
   domain: IMedicalRecordOperationsDomain
   defects: IMedicalRecordQualityDefect[]
   rulePackages?: IMedicalRecordQualityRulePackage[]
+  terminalQualityResults?: Record<string, IMedicalRecordTerminalQualitySummary>
+  archiveRequirements?: IMedicalRecordArchiveRequirements
   now?: number
 }): IMedicalRecordOperationsCenterViewModel {
   const qualityModel = buildMedicalRecordQualityViewModel({
@@ -143,6 +162,8 @@ export function buildMedicalRecordOperationsCenterViewModel(args: {
     documents: args.documents,
     domain: args.domain,
     rulePackages: args.rulePackages,
+    terminalQualityResults: args.terminalQualityResults,
+    archiveRequirements: args.archiveRequirements,
     now: args.now
   })
 
@@ -154,10 +175,10 @@ export function buildMedicalRecordOperationsCenterViewModel(args: {
         document.id,
         args.domain.getOpenDefectCount?.(document.id) ?? 0
       ]))
-    : getOpenDefectCountByStatus(args.defects, ['open', 'returned', 'rectified'])
+    : getOpenDefectCountByStatus(args.defects, OPEN_DEFECT_STATUSES)
 
   const returnedRectificationIds = args.defects
-    .filter(defect => defect.status === 'returned' || defect.status === 'rectified')
+    .filter(defect => RETURNED_RECTIFICATION_STATUSES.includes(defect.status))
     .map(defect => defect.documentId)
   const returnedRectificationIdSet = new Set(returnedRectificationIds)
 

@@ -12,8 +12,10 @@ export {
   type IMedicalRecordArchiveCenterViewOptions,
   type IMedicalRecordArchiveChecklistItem,
   type IMedicalRecordArchiveDomain,
+  type IMedicalRecordArchiveRequirements,
   type IMedicalRecordArchiveItem,
   type IMedicalRecordArchiveRevisionSummary,
+  type IMedicalRecordTerminalQualitySummary,
   type MedicalRecordArchiveStatus
 } from './archive-center'
 export {
@@ -115,6 +117,41 @@ export {
   type IQualityCenterViewModel,
   type IQualityRulePreset
 } from './quality-center'
+export {
+  QualityAnalyticsCenterModule,
+  buildQualityAnalyticsCenterViewModel,
+  createQualityAnalyticsCenterView,
+  type IQualityAnalyticsArchiveItemInput,
+  type IQualityAnalyticsCenterViewModel,
+  type IQualityAnalyticsCenterViewOptions,
+  type IQualityAnalyticsDefectInput,
+  type IQualityAnalyticsDocumentInput,
+  type IQualityAnalyticsQualityResultInput,
+  type IQualityAnalyticsRankingItem,
+  type QualityAnalyticsQualityResultsInput
+} from './quality-analytics-center'
+export {
+  QualityTaskCenterModule,
+  buildQualityTaskCenterViewModel,
+  createQualityTaskCenterView,
+  type IQualityTaskCenterViewModel,
+  type IQualityTaskCenterViewOptions
+} from './quality-task-center'
+export {
+  QualityStandardCenterModule,
+  buildQualityStandardCenterViewModel,
+  createQualityStandardCenterView,
+  type IQualityStandardCenterViewModel,
+  type IQualityStandardCenterViewOptions
+} from './quality-standard-center'
+export {
+  QualityScoringCenterModule,
+  buildQualityScoringCenterViewModel,
+  createQualityScoringCenterView,
+  type IQualityScoringCenterDetailViewModel,
+  type IQualityScoringCenterViewModel,
+  type IQualityScoringCenterViewOptions
+} from './quality-scoring-center'
 export {
   TrialRunCenterModule,
   buildTrialRunCenterViewModel,

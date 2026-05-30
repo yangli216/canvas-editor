@@ -17,6 +17,26 @@ export interface IMedicalRecordDefectCenterViewOptions {
 
 type DefectStatusFilter = 'all' | MedicalRecordDefectStatus
 
+const RETURN_TO_DOCTOR_STATUSES: readonly MedicalRecordDefectStatus[] = [
+  'open',
+  'returned',
+  'secondReturned',
+  'rectified'
+]
+
+const MARK_RECTIFIED_STATUSES: readonly MedicalRecordDefectStatus[] = [
+  'returned',
+  'secondReturned'
+]
+
+const CONVERT_TO_TEMPLATE_ISSUE_STATUSES: readonly MedicalRecordDefectStatus[] = [
+  'open',
+  'returned',
+  'secondReturned',
+  'rectified',
+  'appealing'
+]
+
 function createOption(
   select: HTMLSelectElement,
   value: string,
@@ -68,7 +88,7 @@ function createDefectCard(
   const status = document.createElement('span')
   status.className = item.status === 'closed'
     ? 'tm-center-badge tm-center-badge--success'
-    : item.status === 'templateIssue'
+    : item.status === 'templateIssue' || item.status === 'appealing'
       ? 'tm-center-badge tm-center-badge--warning'
       : 'tm-center-badge tm-center-badge--danger'
   status.textContent = item.statusText
@@ -81,14 +101,17 @@ function createDefectCard(
       options.onOpenField?.(item.documentId, item.fieldId)
     }))
   }
-  if (options.onReturnToDoctor && item.status === 'open') {
+  if (
+    options.onReturnToDoctor
+    && RETURN_TO_DOCTOR_STATUSES.includes(item.status)
+  ) {
     actions.append(createActionButton('退回医生', () => {
       options.onReturnToDoctor?.(item.id)
     }, true))
   }
   if (
     options.onMarkRectified
-    && (item.status === 'returned' || item.status === 'open')
+    && MARK_RECTIFIED_STATUSES.includes(item.status)
   ) {
     actions.append(createActionButton('医生整改', () => {
       options.onMarkRectified?.(item.id)
@@ -101,8 +124,7 @@ function createDefectCard(
   }
   if (
     options.onConvertToTemplateIssue
-    && item.status !== 'closed'
-    && item.status !== 'templateIssue'
+    && CONVERT_TO_TEMPLATE_ISSUE_STATUSES.includes(item.status)
   ) {
     actions.append(createActionButton('反哺模板', () => {
       options.onConvertToTemplateIssue?.(item.id)
@@ -123,6 +145,16 @@ function createDefectCard(
   message.textContent = `${item.category}：${item.message}`
   const hint = document.createElement('small')
   hint.textContent = item.actionHint
+  if (item.overdue) {
+    const overdue = document.createElement('small')
+    overdue.className = 'tm-center-badge tm-center-badge--danger'
+    overdue.textContent = 'SLA 已逾期'
+    detail.append(overdue)
+  }
+  appendTextRow(detail, 'SLA', item.dueAtText)
+  appendTextRow(detail, '退回次数', item.returnCountText)
+  appendTextRow(detail, '申诉', item.appealText)
+  appendTextRow(detail, '来源', item.sourceText)
   appendTextRow(detail, '最近流转', item.latestEventText)
   appendTextRow(detail, '退回说明', item.returnReason)
   appendTextRow(detail, '整改说明', item.rectificationNote)
@@ -185,6 +217,9 @@ export function createMedicalRecordDefectCenterView(
     summary.innerHTML = `
       <div><span>缺陷总数</span><strong>${model.summary.totalCount}</strong></div>
       <div><span>已退回</span><strong>${model.summary.returnedCount}</strong></div>
+      <div><span>二次退回</span><strong>${model.summary.secondReturnedCount}</strong></div>
+      <div><span>SLA 逾期</span><strong>${model.summary.overdueCount}</strong></div>
+      <div><span>申诉中</span><strong>${model.summary.appealingCount}</strong></div>
       <div><span>待复核</span><strong>${model.summary.rectifiedCount}</strong></div>
       <div><span>已关闭</span><strong>${model.summary.closedCount}</strong></div>
       <div><span>模板反哺</span><strong>${model.summary.templateFeedbackCount}</strong></div>
@@ -200,7 +235,9 @@ export function createMedicalRecordDefectCenterView(
     createOption(statusSelect, 'all', '全部状态')
     createOption(statusSelect, 'open', '待分派')
     createOption(statusSelect, 'returned', '已退回医生')
+    createOption(statusSelect, 'secondReturned', '二次退回医生')
     createOption(statusSelect, 'rectified', '医生已整改')
+    createOption(statusSelect, 'appealing', '医生申诉中')
     createOption(statusSelect, 'closed', '复核已关闭')
     createOption(statusSelect, 'templateIssue', '已转模板问题')
     statusSelect.value = statusFilter

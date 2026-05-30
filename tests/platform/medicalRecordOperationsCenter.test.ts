@@ -8,6 +8,7 @@ import type {
 import type { IMedicalRecordQualityDefect } from '@/platform/emr-workbench/domain'
 import {
   buildMedicalRecordOperationsCenterViewModel,
+  MedicalRecordOperationsCenterModule,
   type IMedicalRecordOperationsDomain
 } from '@/platform/emr-workbench/modules'
 
@@ -99,9 +100,9 @@ function createRecord(
 function createDomain(args: {
   summaries: Record<string, Partial<ITemplateDocumentWritingSummary>>
   timelines: Record<string, ITemplateDocumentTraceEvent[]>
-  openDefectCounts: Record<string, number>
+  openDefectCounts?: Record<string, number>
 }): IMedicalRecordOperationsDomain {
-  return {
+  const domain: IMedicalRecordOperationsDomain = {
     getWritingSummary: id => {
       const summary = args.summaries[id]
       if (!summary) return null
@@ -127,9 +128,12 @@ function createDomain(args: {
       pendingCount: 0,
       approvedCount: 0,
       rejectedCount: 0
-    }),
-    getOpenDefectCount: id => args.openDefectCounts[id] ?? 0
+    })
   }
+  if (args.openDefectCounts) {
+    domain.getOpenDefectCount = id => args.openDefectCounts?.[id] ?? 0
+  }
+  return domain
 }
 
 function createDefect(input: Partial<IMedicalRecordQualityDefect>): IMedicalRecordQualityDefect {
@@ -145,6 +149,7 @@ function createDefect(input: Partial<IMedicalRecordQualityDefect>): IMedicalReco
     fieldLabel: input.fieldLabel,
     category: input.category ?? '必填字段',
     level: input.level ?? 'blocker',
+    severity: input.severity ?? 'blocker',
     levelText: input.levelText ?? '阻断',
     message: input.message ?? '主诉缺失',
     actionHint: input.actionHint ?? '请补录主诉',
@@ -153,6 +158,7 @@ function createDefect(input: Partial<IMedicalRecordQualityDefect>): IMedicalReco
     statusText: input.statusText ?? '已退回医生',
     createdAt: input.createdAt ?? 1000,
     updatedAt: input.updatedAt ?? 1200,
+    returnCount: input.returnCount ?? 1,
     events: input.events ?? [
       {
         action: 'returned',
@@ -258,5 +264,157 @@ describe('medical record operations center view model', () => {
       queue.items.map(item => item.documentId)
     ))
     expect(new Set(allQueuedIds).size).toBe(allQueuedIds.length)
+  })
+
+  it('将新增归档准入阻断透传到 operations 归档阻断原因', () => {
+    const record = createRecord({ id: 'record-archive-requirement', status: 'signed' })
+    const model = buildMedicalRecordOperationsCenterViewModel({
+      documents: [record],
+      domain: createDomain({
+        summaries: {
+          'record-archive-requirement': {
+            signCount: 1,
+            reviewCount: 1
+          }
+        },
+        timelines: {
+          'record-archive-requirement': [
+            createTrace({ action: 'writing_save', timestamp: 1000 }),
+            createTrace({ action: 'sign', timestamp: 1200 }),
+            createTrace({ action: 'review', timestamp: 1400 })
+          ]
+        },
+        openDefectCounts: {}
+      }),
+      defects: [],
+      terminalQualityResults: {
+        'record-archive-requirement': {
+          conclusion: 'blocked',
+          score: 74,
+          grade: 'D'
+        }
+      },
+      archiveRequirements: {
+        requireHomepage: true
+      },
+      now: 3000
+    })
+
+    expect(model.summary.archiveBlockedCount).toBe(1)
+    const blockedGroup = model.queues.find(item => item.queue === 'archiveBlocked')
+    const blockedDocument = blockedGroup?.items.find(item => (
+      item.documentId === 'record-archive-requirement'
+    ))
+    expect(blockedDocument?.blockerReasonText).toContain('终末质控')
+    expect(blockedDocument?.blockerReasonText).toContain('病案首页')
+  })
+
+  it('模块弹窗入口透传终末质控和归档准入阻断原因', () => {
+    const record = createRecord({ id: 'record-dialog-requirement', status: 'signed' })
+    const view = new MedicalRecordOperationsCenterModule().createDialogContent({
+      documents: [record],
+      domain: createDomain({
+        summaries: {
+          'record-dialog-requirement': {
+            signCount: 1,
+            reviewCount: 1
+          }
+        },
+        timelines: {
+          'record-dialog-requirement': [
+            createTrace({ action: 'writing_save', timestamp: 1000 }),
+            createTrace({ action: 'sign', timestamp: 1200 }),
+            createTrace({ action: 'review', timestamp: 1400 })
+          ]
+        },
+        openDefectCounts: {}
+      }),
+      defects: [],
+      terminalQualityResults: {
+        'record-dialog-requirement': {
+          conclusion: 'blocked',
+          score: 74,
+          grade: 'D'
+        }
+      },
+      archiveRequirements: {
+        requireHomepage: true
+      },
+      now: 3000
+    })
+
+    expect(view.textContent).toContain('归档阻断')
+    expect(view.textContent).toContain('终末质控')
+    expect(view.textContent).toContain('病案首页')
+  })
+
+  it('将二次退回和申诉中的缺陷纳入退回整改队列和兜底开放缺陷计数', () => {
+    const secondReturned = createRecord({
+      id: 'record-second-returned',
+      status: 'signed',
+      title: '二次退回病历'
+    })
+    const appealing = createRecord({
+      id: 'record-appealing',
+      status: 'signed',
+      title: '申诉中病历'
+    })
+    const summaries = {
+      'record-second-returned': {
+        signCount: 1,
+        reviewCount: 1
+      },
+      'record-appealing': {
+        signCount: 1,
+        reviewCount: 1
+      }
+    }
+    const timelines = {
+      'record-second-returned': [
+        createTrace({ action: 'writing_save', timestamp: 1000 }),
+        createTrace({ action: 'sign', timestamp: 1200 }),
+        createTrace({ action: 'review', timestamp: 1400 })
+      ],
+      'record-appealing': [
+        createTrace({ action: 'writing_save', timestamp: 1000 }),
+        createTrace({ action: 'sign', timestamp: 1200 }),
+        createTrace({ action: 'review', timestamp: 1400 })
+      ]
+    }
+    const defects = [
+      createDefect({
+        id: 'defect-second-returned',
+        documentId: 'record-second-returned',
+        status: 'secondReturned',
+        statusText: '二次退回医生',
+        returnCount: 2
+      }),
+      createDefect({
+        id: 'defect-appealing',
+        documentId: 'record-appealing',
+        status: 'appealing',
+        statusText: '医生申诉中'
+      })
+    ]
+
+    const model = buildMedicalRecordOperationsCenterViewModel({
+      documents: [secondReturned, appealing],
+      domain: createDomain({ summaries, timelines }),
+      defects,
+      now: 3000
+    })
+
+    expect(model.summary.returnedRectificationCount).toBe(2)
+    const returnedGroup = model.queues.find(item => (
+      item.queue === 'returnedRectification'
+    ))
+    const returnedItems = returnedGroup?.items ?? []
+    expect(returnedItems.map(item => item.documentId)).toEqual(expect.arrayContaining([
+      'record-appealing',
+      'record-second-returned'
+    ]))
+    expect(returnedItems).toHaveLength(2)
+    expect(returnedItems.every(item => item.openDefectCount === 1)).toBe(true)
+    expect(model.summary.pendingArchiveCount).toBe(0)
   })
 })

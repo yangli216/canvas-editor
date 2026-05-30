@@ -2,17 +2,22 @@ import type { ITemplateDocumentTraceOptions } from '../../../editor/template/Tem
 import { MedicalRecordDomainService } from './medical-record-domain-service'
 
 export type MedicalRecordDefectLevel = 'blocker' | 'warning' | 'info'
+export type MedicalRecordDefectSeverity = 'blocker' | 'serious' | 'normal' | 'info'
 export type MedicalRecordDefectStatus =
   | 'open'
   | 'returned'
+  | 'secondReturned'
   | 'rectified'
+  | 'appealing'
   | 'closed'
   | 'templateIssue'
 
 export type MedicalRecordDefectEventAction =
   | 'created'
   | 'returned'
+  | 'second_returned'
   | 'rectified'
+  | 'appealed'
   | 'closed'
   | 'template_issue'
 
@@ -24,6 +29,9 @@ export interface IMedicalRecordDefectSourceIssue {
   actionHint: string
   fieldId?: string
   fieldLabel?: string
+  deduction?: number
+  sourceTaskId?: string
+  sourceResultId?: string
 }
 
 export interface IMedicalRecordDefectSourceItem {
@@ -54,7 +62,9 @@ export interface IMedicalRecordQualityDefect {
   fieldLabel?: string
   category: string
   level: MedicalRecordDefectLevel
+  severity: MedicalRecordDefectSeverity
   levelText: string
+  deduction?: number
   message: string
   actionHint: string
   owner: string
@@ -66,10 +76,16 @@ export interface IMedicalRecordQualityDefect {
   rectifiedAt?: number
   closedAt?: number
   templateIssueAt?: number
+  dueAt?: number
+  returnCount: number
   returnReason?: string
   rectificationNote?: string
   reviewOpinion?: string
   templateIssueSuggestion?: string
+  appealReason?: string
+  appealStatus?: 'submitted'
+  sourceTaskId?: string
+  sourceResultId?: string
   events: IMedicalRecordDefectEvent[]
 }
 
@@ -88,7 +104,9 @@ export interface IMedicalRecordTemplateFeedbackSummary {
 const STATUS_TEXT: Record<MedicalRecordDefectStatus, string> = {
   open: '待分派',
   returned: '已退回医生',
+  secondReturned: '二次退回医生',
   rectified: '医生已整改',
+  appealing: '医生申诉中',
   closed: '复核已关闭',
   templateIssue: '已转模板问题'
 }
@@ -98,6 +116,32 @@ const LEVEL_TEXT: Record<MedicalRecordDefectLevel, string> = {
   warning: '警告',
   info: '提示'
 }
+
+const SEVERITY_MAP: Record<MedicalRecordDefectLevel, MedicalRecordDefectSeverity> = {
+  blocker: 'blocker',
+  warning: 'normal',
+  info: 'info'
+}
+
+const RETURN_TO_DOCTOR_SOURCE_STATUSES: MedicalRecordDefectStatus[] = [
+  'open',
+  'returned',
+  'secondReturned',
+  'rectified'
+]
+
+const RECTIFICATION_SOURCE_STATUSES: MedicalRecordDefectStatus[] = [
+  'returned',
+  'secondReturned'
+]
+
+const TEMPLATE_ISSUE_SOURCE_STATUSES: MedicalRecordDefectStatus[] = [
+  'open',
+  'returned',
+  'secondReturned',
+  'rectified',
+  'appealing'
+]
 
 function createDefectId(documentId: string, issueId: string) {
   return `defect:${documentId}:${issueId}`
@@ -114,6 +158,8 @@ function getTemplateVersion(templateText: string) {
 
 function getEventAction(status: MedicalRecordDefectStatus): MedicalRecordDefectEventAction {
   if (status === 'templateIssue') return 'template_issue'
+  if (status === 'secondReturned') return 'second_returned'
+  if (status === 'appealing') return 'appealed'
   if (status === 'open') return 'created'
   return status
 }
@@ -141,12 +187,16 @@ export class MedicalRecordDefectDomainService {
             this.defects.set(id, {
               ...current,
               level: issue.level,
+              severity: SEVERITY_MAP[issue.level],
               levelText: LEVEL_TEXT[issue.level],
+              deduction: issue.deduction,
               category: issue.category,
               message: issue.message,
               actionHint: issue.actionHint,
               fieldId: issue.fieldId,
               fieldLabel: issue.fieldLabel,
+              sourceTaskId: issue.sourceTaskId,
+              sourceResultId: issue.sourceResultId,
               updatedAt: now
             })
             return
@@ -163,7 +213,9 @@ export class MedicalRecordDefectDomainService {
             fieldLabel: issue.fieldLabel,
             category: issue.category,
             level: issue.level,
+            severity: SEVERITY_MAP[issue.level],
             levelText: LEVEL_TEXT[issue.level],
+            deduction: issue.deduction,
             message: issue.message,
             actionHint: issue.actionHint,
             owner: item.ownerText,
@@ -171,6 +223,9 @@ export class MedicalRecordDefectDomainService {
             statusText: STATUS_TEXT.open,
             createdAt: now,
             updatedAt: now,
+            returnCount: 0,
+            sourceTaskId: issue.sourceTaskId,
+            sourceResultId: issue.sourceResultId,
             events: [{ action: 'created', operator, timestamp: now, note: '由病历质控结果生成缺陷' }]
           })
         })
@@ -199,14 +254,47 @@ export class MedicalRecordDefectDomainService {
     options: {
       operator?: string
       reason?: string
+      dueAt?: number
     } = {}
   ) {
-    return this._transition(id, 'returned', {
+    const current = this.defects.get(id)
+    const returnCount = (current?.returnCount ?? 0) + 1
+    const patch: Partial<IMedicalRecordQualityDefect> = {
+      returnCount,
+      appealReason: undefined,
+      appealStatus: undefined
+    }
+    if (typeof options.dueAt === 'number') patch.dueAt = options.dueAt
+    return this._transition(id, returnCount > 1 ? 'secondReturned' : 'returned', {
+      allowedFrom: RETURN_TO_DOCTOR_SOURCE_STATUSES,
       operator: options.operator ?? '质控员',
       note: options.reason ?? '质控退回医生整改',
+      patch,
       trace: {
         title: '质控退回',
         summary: options.reason ?? '质控缺陷退回医生整改'
+      }
+    })
+  }
+
+  submitAppeal(
+    id: string,
+    options: {
+      operator?: string
+      reason: string
+    }
+  ) {
+    return this._transition(id, 'appealing', {
+      allowedFrom: RECTIFICATION_SOURCE_STATUSES,
+      operator: options.operator ?? '医生',
+      note: options.reason,
+      patch: {
+        appealReason: options.reason,
+        appealStatus: 'submitted'
+      },
+      trace: {
+        title: '缺陷申诉',
+        summary: options.reason
       }
     })
   }
@@ -219,6 +307,7 @@ export class MedicalRecordDefectDomainService {
     } = {}
   ) {
     return this._transition(id, 'rectified', {
+      allowedFrom: RECTIFICATION_SOURCE_STATUSES,
       operator: options.operator ?? '医生',
       note: options.note ?? '医生已完成整改',
       trace: {
@@ -236,6 +325,7 @@ export class MedicalRecordDefectDomainService {
     } = {}
   ) {
     return this._transition(id, 'closed', {
+      allowedFrom: ['rectified'],
       operator: options.operator ?? '质控员',
       note: options.opinion ?? '复核通过并关闭缺陷',
       trace: {
@@ -253,6 +343,7 @@ export class MedicalRecordDefectDomainService {
     } = {}
   ) {
     return this._transition(id, 'templateIssue', {
+      allowedFrom: TEMPLATE_ISSUE_SOURCE_STATUSES,
       operator: options.operator ?? '模板管理员',
       note: options.suggestion ?? '高频缺陷转为模板问题单',
       trace: {
@@ -296,27 +387,35 @@ export class MedicalRecordDefectDomainService {
     id: string,
     status: MedicalRecordDefectStatus,
     options: {
+      allowedFrom: MedicalRecordDefectStatus[]
       operator: string
       note: string
+      patch?: Partial<IMedicalRecordQualityDefect>
       trace: Pick<ITemplateDocumentTraceOptions, 'title' | 'summary'>
     }
   ) {
     const current = this.defects.get(id)
     if (!current) return null
+    if (!options.allowedFrom.includes(current.status)) return null
     const now = Date.now()
     const next: IMedicalRecordQualityDefect = {
       ...current,
       status,
       statusText: STATUS_TEXT[status],
       updatedAt: now,
-      returnedAt: status === 'returned' ? now : current.returnedAt,
+      returnedAt: status === 'returned' || status === 'secondReturned'
+        ? now
+        : current.returnedAt,
       rectifiedAt: status === 'rectified' ? now : current.rectifiedAt,
       closedAt: status === 'closed' ? now : current.closedAt,
       templateIssueAt: status === 'templateIssue' ? now : current.templateIssueAt,
-      returnReason: status === 'returned' ? options.note : current.returnReason,
+      returnReason: status === 'returned' || status === 'secondReturned'
+        ? options.note
+        : current.returnReason,
       rectificationNote: status === 'rectified' ? options.note : current.rectificationNote,
       reviewOpinion: status === 'closed' ? options.note : current.reviewOpinion,
       templateIssueSuggestion: status === 'templateIssue' ? options.note : current.templateIssueSuggestion,
+      ...options.patch,
       events: [
         ...current.events,
         {

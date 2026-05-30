@@ -9,13 +9,19 @@ import {
   type IMedicalRecordOperationsCenterViewOptions
 } from './view'
 
+type OperationsCenterBuilderArgs = Parameters<
+  typeof buildMedicalRecordOperationsCenterViewModel
+>[0]
+
 export class MedicalRecordOperationsCenterModule {
   createDialogContent(args: {
     documents: ITemplateDocumentRecord[]
     domain: IMedicalRecordOperationsDomain
     defects: IMedicalRecordQualityDefect[]
-    rulePackages?: Parameters<typeof buildMedicalRecordOperationsCenterViewModel>[0]['rulePackages']
-    now?: Parameters<typeof buildMedicalRecordOperationsCenterViewModel>[0]['now']
+    rulePackages?: OperationsCenterBuilderArgs['rulePackages']
+    terminalQualityResults?: OperationsCenterBuilderArgs['terminalQualityResults']
+    archiveRequirements?: OperationsCenterBuilderArgs['archiveRequirements']
+    now?: OperationsCenterBuilderArgs['now']
     onOpenTrace?: IMedicalRecordOperationsCenterViewOptions['onOpenTrace']
     onOpenDefectCenter?: IMedicalRecordOperationsCenterViewOptions['onOpenDefectCenter']
     onOpenArchiveCenter?: IMedicalRecordOperationsCenterViewOptions['onOpenArchiveCenter']
@@ -26,6 +32,8 @@ export class MedicalRecordOperationsCenterModule {
         domain: args.domain,
         defects: args.defects,
         rulePackages: args.rulePackages,
+        terminalQualityResults: args.terminalQualityResults,
+        archiveRequirements: args.archiveRequirements,
         now: args.now
       }),
       onOpenTrace: args.onOpenTrace,

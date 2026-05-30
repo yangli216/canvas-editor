@@ -11,7 +11,8 @@ import {
 } from '@/platform/emr-workbench/domain'
 import {
   buildMedicalRecordDefectCenterViewModel,
-  buildMedicalRecordQualityViewModel
+  buildMedicalRecordQualityViewModel,
+  createMedicalRecordDefectCenterView
 } from '@/platform/emr-workbench/modules'
 
 const schema: ITemplateSchema = {
@@ -143,6 +144,7 @@ describe('medical record defect remediation center', () => {
     expect(requiredDefect?.status).toBe('open')
     expect(requiredDefect?.documentId).toBe('record-1')
     expect(requiredDefect?.templateId).toBe(schema.id)
+    expect(requiredDefect?.severity).toBe('blocker')
 
     const returned = domains.defectDomain.returnToDoctor(requiredDefect!.id, {
       operator: '质控员',
@@ -171,6 +173,67 @@ describe('medical record defect remediation center', () => {
     expect(timelineTitles).toContain('质控退回')
     expect(timelineTitles).toContain('医生整改')
     expect(timelineTitles).toContain('质控复核关闭')
+  })
+
+  it('拒绝非法缺陷状态流转且不改变缺陷状态', () => {
+    const domains = createDomains()
+    createBlockedRecord(domains.store, 'record-invalid-transition')
+    const defects = syncDefects(domains)
+    const target = defects.find(defect => defect.category === '必填字段')!
+
+    const openEventCount = target.events.length
+    const openTraceCount = domains.medicalRecordDomain
+      .getTraceTimeline(target.documentId)
+      .length
+
+    expect(domains.defectDomain.close(target.id)).toBeNull()
+    expect(domains.defectDomain.markRectified(target.id)).toBeNull()
+    const stillOpen = domains.defectDomain.list().find(defect => defect.id === target.id)!
+    expect(stillOpen.status).toBe('open')
+    expect(stillOpen.events).toHaveLength(openEventCount)
+    expect(domains.medicalRecordDomain.getTraceTimeline(target.documentId))
+      .toHaveLength(openTraceCount)
+
+    domains.defectDomain.returnToDoctor(target.id)
+    domains.defectDomain.markRectified(target.id)
+    const closed = domains.defectDomain.close(target.id)!
+    const closedEventCount = closed.events.length
+    const closedTraceCount = domains.medicalRecordDomain
+      .getTraceTimeline(target.documentId)
+      .length
+
+    expect(domains.defectDomain.returnToDoctor(target.id)).toBeNull()
+    const stillClosed = domains.defectDomain.list().find(defect => defect.id === target.id)!
+    expect(stillClosed.status).toBe('closed')
+    expect(stillClosed.events).toHaveLength(closedEventCount)
+    expect(domains.medicalRecordDomain.getTraceTimeline(target.documentId))
+      .toHaveLength(closedTraceCount)
+
+    createBlockedRecord(domains.store, 'record-template-issue')
+    const templateDefect = domains.defectDomain.syncFromQualityItems(
+      buildMedicalRecordQualityViewModel({
+        documents: domains.medicalRecordDomain.list(),
+        domain: domains.medicalRecordDomain,
+        now: 5000
+      }).items
+    ).find(defect => (
+      defect.documentId === 'record-template-issue'
+      && defect.category === '必填字段'
+    ))!
+    const templateIssue = domains.defectDomain.convertToTemplateIssue(templateDefect.id)!
+    const templateIssueEventCount = templateIssue.events.length
+    const templateIssueTraceCount = domains.medicalRecordDomain
+      .getTraceTimeline(templateIssue.documentId)
+      .length
+
+    expect(domains.defectDomain.close(templateIssue.id)).toBeNull()
+    const stillTemplateIssue = domains.defectDomain.list().find(defect => (
+      defect.id === templateIssue.id
+    ))!
+    expect(stillTemplateIssue.status).toBe('templateIssue')
+    expect(stillTemplateIssue.events).toHaveLength(templateIssueEventCount)
+    expect(domains.medicalRecordDomain.getTraceTimeline(templateIssue.documentId))
+      .toHaveLength(templateIssueTraceCount)
   })
 
   it('汇总高频缺陷并支持转模板问题单', () => {
@@ -217,6 +280,170 @@ describe('medical record defect remediation center', () => {
     expect(model.summary.returnedCount).toBe(1)
     expect(model.summary.templateFeedbackCount).toBeGreaterThan(0)
     expect(model.items[0].status).toBe('returned')
+  })
+
+  it('按缺陷状态展示整改中心操作按钮', () => {
+    const createViewButtonTexts = (model: ReturnType<
+      typeof buildMedicalRecordDefectCenterViewModel
+    >) => {
+      const view = createMedicalRecordDefectCenterView({
+        model,
+        onReturnToDoctor: () => {},
+        onMarkRectified: () => {},
+        onClose: () => {},
+        onConvertToTemplateIssue: () => {}
+      })
+      return Array.from(view.querySelectorAll('button'))
+        .map(btn => btn.textContent)
+    }
+
+    const openDomains = createDomains()
+    createBlockedRecord(openDomains.store, 'record-open')
+    const openDefects = syncDefects(openDomains)
+    const openTarget = openDefects.find(defect => defect.category === '必填字段')!
+    const openModel = buildMedicalRecordDefectCenterViewModel({
+      defects: openDomains.defectDomain.list().filter(defect => (
+        defect.id === openTarget.id
+      ))
+    })
+    const openButtonTexts = createViewButtonTexts(openModel)
+
+    expect(openButtonTexts).toContain('退回医生')
+    expect(openButtonTexts).not.toContain('医生整改')
+    expect(openButtonTexts).not.toContain('复核关闭')
+
+    const appealingDomains = createDomains()
+    createBlockedRecord(appealingDomains.store, 'record-appealing')
+    const defects = syncDefects(appealingDomains)
+    const target = defects.find(defect => defect.category === '必填字段')!
+    appealingDomains.defectDomain.returnToDoctor(target.id)
+    appealingDomains.defectDomain.submitAppeal(target.id, {
+      reason: '患者暂无法补充主诉'
+    })
+    const appealingModel = buildMedicalRecordDefectCenterViewModel({
+      defects: appealingDomains.defectDomain.list().filter(defect => (
+        defect.id === target.id
+      ))
+    })
+    const appealingButtonTexts = createViewButtonTexts(appealingModel)
+
+    expect(appealingButtonTexts).not.toContain('退回医生')
+    expect(appealingButtonTexts).not.toContain('医生整改')
+    expect(appealingButtonTexts).not.toContain('复核关闭')
+    expect(appealingButtonTexts).toContain('反哺模板')
+  })
+
+  it('跟踪病历缺陷 SLA、二次退回和申诉状态', () => {
+    const domains = createDomains()
+    createBlockedRecord(domains.store, 'record-sla')
+    const defects = syncDefects(domains)
+    const target = defects.find(defect => defect.category === '必填字段')!
+
+    domains.defectDomain.syncFromQualityItems([{
+      id: target.documentId,
+      templateId: target.templateId,
+      templateText: target.templateText,
+      title: target.documentTitle,
+      ownerText: target.owner,
+      issues: [{
+        id: target.sourceIssueId,
+        level: target.level,
+        category: target.category,
+        message: target.message,
+        actionHint: target.actionHint,
+        fieldId: target.fieldId,
+        fieldLabel: target.fieldLabel,
+        deduction: 10,
+        sourceTaskId: 'task-1',
+        sourceResultId: 'result-1'
+      }]
+    }])
+
+    const firstReturned = domains.defectDomain.returnToDoctor(target.id, {
+      dueAt: 1000
+    })
+    expect(firstReturned?.dueAt).toBe(1000)
+    expect(firstReturned?.returnCount).toBe(1)
+
+    const secondReturned = domains.defectDomain.returnToDoctor(target.id, {
+      dueAt: 2000
+    })
+    expect(secondReturned?.status).toBe('secondReturned')
+    expect(secondReturned?.returnCount).toBe(2)
+
+    const secondReturnedModel = buildMedicalRecordDefectCenterViewModel({
+      defects: domains.defectDomain.list(),
+      now: 3000
+    })
+    expect(secondReturnedModel.summary.secondReturnedCount).toBe(1)
+
+    const appeal = domains.defectDomain.submitAppeal(target.id, {
+      reason: '患者无法提供完整主诉'
+    })
+    expect(appeal?.status).toBe('appealing')
+    expect(appeal?.appealReason).toContain('患者无法提供完整主诉')
+    expect(appeal?.events.map(event => event.action)).toEqual(expect.arrayContaining([
+      'second_returned',
+      'appealed'
+    ]))
+
+    const model = buildMedicalRecordDefectCenterViewModel({
+      defects: domains.defectDomain.list(),
+      now: 3000
+    })
+    const item = model.items.find(defect => defect.id === target.id)!
+    expect(model.summary.overdueCount).toBeGreaterThan(0)
+    expect(model.summary.appealingCount).toBe(1)
+    expect(item.overdue).toBe(true)
+    expect(item.returnCountText).toBe('退回 2 次')
+    expect(item.dueAtText).not.toBe('暂无')
+    expect(item.appealText).toBe('申诉中')
+    expect(item.sourceText).toContain('task-1')
+    expect(item.sourceText).toContain('result-1')
+
+    const view = createMedicalRecordDefectCenterView({ model })
+    expect(view.textContent).toContain('SLA')
+    expect(view.textContent).toContain('逾期')
+    expect(view.textContent).toContain('退回 2 次')
+    expect(view.textContent).toContain('申诉中')
+    expect(view.textContent).toContain('来源')
+  })
+
+  it('同步质控来源问题的扣分、任务和结果来源', () => {
+    const domains = createDomains()
+
+    const defects = domains.defectDomain.syncFromQualityItems([{
+      id: 'record-source',
+      templateId: schema.id,
+      templateText: '入院记录 v1.0.0',
+      title: '入院记录',
+      ownerText: '王医生',
+      issues: [{
+        id: 'issue-source',
+        level: 'blocker',
+        category: '必填字段',
+        message: '主诉不能为空',
+        actionHint: '请补充主诉',
+        fieldId: 'chiefComplaint',
+        fieldLabel: '主诉',
+        deduction: 10,
+        sourceTaskId: 'task-1',
+        sourceResultId: 'result-1'
+      }]
+    }])
+
+    const defect = defects.find(item => item.sourceIssueId === 'issue-source')!
+    expect(defect.deduction).toBe(10)
+    expect(defect.sourceTaskId).toBe('task-1')
+    expect(defect.sourceResultId).toBe('result-1')
+
+    const model = buildMedicalRecordDefectCenterViewModel({
+      defects: domains.defectDomain.list()
+    })
+    const item = model.items.find(item => item.id === defect.id)!
+    expect(item.sourceText).toContain('task-1')
+    expect(item.sourceText).toContain('result-1')
+    expect(item.sourceText).toContain('扣 10 分')
   })
 
   it('将病历缺陷反哺到模板版本中心的修订、验证和发布记录', () => {
