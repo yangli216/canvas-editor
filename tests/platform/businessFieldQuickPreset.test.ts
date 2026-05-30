@@ -45,6 +45,51 @@ describe('business field quick presets', () => {
     })
   })
 
+  it('传入主数据时会以主数据生成快配并写入主数据引用', () => {
+    const presets = getBusinessFieldQuickPresets([
+      {
+        id: 'meta-admission-no',
+        code: 'encounter.admissionNo',
+        name: '住院号',
+        group: '就诊信息',
+        dataSource: 'his.encounter',
+        permission: 'encounter.read.basic',
+        exportPath: 'encounter.admissionNo',
+        tags: ['encounter']
+      }
+    ])
+    const admissionNoPreset = presets.find(
+      item => item.id === 'meta-admission-no'
+    )
+    const field: ITemplateField = {
+      id: 'field-1',
+      type: 'text',
+      label: '待配置字段',
+      metadata: {
+        listeners: ['change']
+      }
+    }
+
+    expect(admissionNoPreset).toMatchObject({
+      label: '住院号',
+      metadataPatch: {
+        metadataFieldId: 'meta-admission-no',
+        businessCode: 'encounter.admissionNo',
+        dataSource: 'his.encounter'
+      }
+    })
+
+    const updated = applyBusinessFieldQuickPreset(field, admissionNoPreset!)
+
+    expect(updated.label).toBe('住院号')
+    expect(updated.metadata).toMatchObject({
+      metadataFieldId: 'meta-admission-no',
+      businessCode: 'encounter.admissionNo',
+      dataSource: 'his.encounter',
+      listeners: ['change']
+    })
+  })
+
   it('会按字段名和标签智能推荐更可能命中的快配', () => {
     const recommendations = recommendBusinessFieldQuickPresets({
       id: 'patientName',

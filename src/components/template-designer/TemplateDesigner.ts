@@ -11,6 +11,7 @@ import {
   validateSchema
 } from '../../editor/template/index'
 import { getTemplatePageDecorationPreset } from '../../editor/template/TemplatePageDecoration'
+import { createTemplateFieldFromBusinessMetadataField } from '../../editor/template/TemplateFieldQuickPreset'
 import { buildTemplateFieldRuntimeIndex } from '../../editor/template/TemplateRuntime'
 import { templateRegistry } from '../../editor/template/TemplateRegistry'
 import type { ITemplateRegistryEntry } from '../../editor/template/TemplateRegistry'
@@ -281,7 +282,8 @@ export class TemplateDesigner {
         this._handleBlockChange(blockIndex, updated, phase),
       onFieldChange: (blockIndex, fieldId, updated, phase) =>
         this._handleFieldChange(blockIndex, fieldId, updated, phase),
-      onAddField: blockIndex => this._handleAddField(blockIndex),
+      onAddField: (blockIndex, metadataField) =>
+        this._handleAddField(blockIndex, metadataField),
       onLayoutChange: (layout, phase) => this._handleLayoutChange(layout, phase),
       metadataFields: options.metadataFields
     })
@@ -1666,15 +1668,21 @@ export class TemplateDesigner {
     this._syncDesignerAfterChange()
   }
 
-  private _handleAddField(blockIndex: number) {
+  private _handleAddField(
+    blockIndex: number,
+    metadataField?: ITemplateMetadataFieldBindingOption
+  ) {
     const blocks = [...this._getActiveBlocks()]
     const block = blocks[blockIndex]
-    const newField: ITemplateField = {
-      id: genFieldId(),
-      type: 'text',
-      label: '新字段',
-      placeholder: '请输入'
-    }
+    const fieldId = genFieldId()
+    const newField: ITemplateField = metadataField
+      ? createTemplateFieldFromBusinessMetadataField(fieldId, metadataField)
+      : {
+          id: fieldId,
+          type: 'text',
+          label: '新字段',
+          placeholder: '请输入'
+        }
     if (block.type === 'fieldRow') {
       blocks[blockIndex] = { ...block, fields: [...block.fields, newField] }
     }

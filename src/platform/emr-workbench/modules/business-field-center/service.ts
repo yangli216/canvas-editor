@@ -159,12 +159,20 @@ function matchKeyword(field: IBusinessFieldCenterFieldAsset, keyword: string): b
 
 function createFieldAsset(args: {
   metadataField: IBusinessMetadataField
+  metadataFields: IBusinessMetadataField[]
   bindings: IBusinessMetadataTemplateBinding[]
   candidates: IBusinessMetadataFieldCandidate[]
   conflicts: IBusinessMetadataConflict[]
   hospitalMappings: IBusinessMetadataHospitalFieldMapping[]
 }): IBusinessFieldCenterFieldAsset {
-  const { metadataField, bindings, candidates, conflicts, hospitalMappings } = args
+  const {
+    metadataField,
+    metadataFields,
+    bindings,
+    candidates,
+    conflicts,
+    hospitalMappings
+  } = args
   const bindingCount = bindings.length
   const hospitalMappingCount = hospitalMappings.length
   const candidate = candidates.find(item => item.code === metadataField.code)
@@ -205,7 +213,7 @@ function createFieldAsset(args: {
         exportPath: metadataField.exportPath,
         tags: metadataField.tags
       }
-    }).map(item => item.label)
+    }, 3, metadataFields).map(item => item.label)
   }
 }
 
@@ -233,6 +241,7 @@ export function buildBusinessFieldCenterViewModel(args: {
   const allFields = metadataFields.map(metadataField => {
     return createFieldAsset({
       metadataField,
+      metadataFields,
       bindings: bindings.filter(item => item.metadataFieldId === metadataField.id),
       candidates,
       conflicts,

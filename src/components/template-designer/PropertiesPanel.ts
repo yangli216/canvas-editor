@@ -59,10 +59,15 @@ export interface IPropertiesPanelOptions {
     updated: ITemplateField,
     phase?: PropertiesChangePhase
   ) => void
-  onAddField: (blockIndex: number) => void
+  onAddField: (
+    blockIndex: number,
+    metadataField?: ITemplateMetadataFieldBindingOption
+  ) => void
   onLayoutChange?: (layout: ITemplateLayout, phase?: PropertiesChangePhase) => void
   metadataFields?: ITemplateMetadataFieldBindingOption[]
 }
+
+const METADATA_FIELD_DRAG_MIME = 'application/x-canvas-editor-metadata-field'
 
 const RULE_TYPE_COLORS: Record<string, string> = {
   visibility: '#4285f4',
@@ -245,6 +250,28 @@ function note(text: string): HTMLDivElement {
   const wrap = el('div', 'td-props__hint')
   wrap.textContent = text
   return wrap
+}
+
+function writeMetadataFieldDragData(
+  dataTransfer: DataTransfer | null,
+  metadataField: ITemplateMetadataFieldBindingOption
+) {
+  if (!dataTransfer) return
+  dataTransfer.effectAllowed = 'copy'
+  dataTransfer.setData(METADATA_FIELD_DRAG_MIME, metadataField.id)
+}
+
+function readMetadataFieldDragData(
+  dataTransfer: DataTransfer | null
+): string | undefined {
+  return dataTransfer?.getData(METADATA_FIELD_DRAG_MIME) || undefined
+}
+
+function hasMetadataFieldDragData(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false
+  const types = Array.from(dataTransfer.types ?? [])
+  return types.includes(METADATA_FIELD_DRAG_MIME) ||
+    Boolean(readMetadataFieldDragData(dataTransfer))
 }
 
 function checkboxInput(
@@ -732,6 +759,10 @@ export class PropertiesPanel {
       addBtn.textContent = '+ 添加字段'
       addBtn.addEventListener('click', () => this.options.onAddField(blockIndex))
       this.container.append(addBtn)
+      const metadataQuickAdd = this._renderFieldRowMetadataQuickAdd(blockIndex)
+      if (metadataQuickAdd) {
+        this.container.append(metadataQuickAdd)
+      }
     }
 
     if (block.type === 'paragraph') {
@@ -1391,7 +1422,12 @@ export class PropertiesPanel {
       return grid
     }
 
-    const recommended = recommendBusinessFieldQuickPresets(field)
+    const metadataFields = this.options.metadataFields ?? []
+    const recommended = recommendBusinessFieldQuickPresets(
+      field,
+      3,
+      metadataFields
+    )
     if (recommended.length) {
       const recommendedTitle = el('div', 'td-props__subsection-title')
       recommendedTitle.textContent = '智能推荐'
@@ -1419,7 +1455,7 @@ export class PropertiesPanel {
     wrap.append(
       businessPresetTitle,
       createPresetGrid(
-        getBusinessFieldQuickPresets().map(preset => ({
+        getBusinessFieldQuickPresets(metadataFields).map(preset => ({
           label: preset.label,
           desc: preset.description,
           onClick: () => onChange(applyBusinessFieldQuickPreset(field, preset))
@@ -1444,7 +1480,101 @@ export class PropertiesPanel {
       desc: item.desc,
       onClick: () => onChange({ ...field, ...item.patch })
     }))))
-    return card('字段快配', [wrap], '业务字段中心和属性栏已复用同一套业务快配预设，并支持按字段名/标签智能推荐。')
+    return card('字段快配', [wrap], '优先复用字段主数据生成快配，并支持按字段名/标签智能推荐。')
+  }
+
+  private _renderFieldRowMetadataQuickAdd(
+    blockIndex: number
+  ): HTMLDivElement | null {
+    const metadataFields = this.options.metadataFields ?? []
+    if (!metadataFields.length) return null
+
+    const search = el('input', 'td-props__input td-props__metadata-search')
+    search.type = 'search'
+    search.placeholder = '搜索名称、编码、分组、数据源'
+    search.dataset.testid = 'business-metadata-field-search'
+
+    const quickList = el('div', 'td-props__metadata-source-list')
+    const empty = el('div', 'td-props__metadata-source-empty')
+    empty.textContent = '没有匹配的数据元'
+    empty.hidden = true
+    const cards: Array<{
+      element: HTMLButtonElement
+      searchText: string
+    }> = []
+    const applyFilter = () => {
+      const keyword = search.value.trim().toLowerCase()
+      let visibleCount = 0
+      cards.forEach(card => {
+        const matched = !keyword || card.searchText.includes(keyword)
+        card.element.hidden = !matched
+        if (matched) visibleCount += 1
+      })
+      empty.hidden = visibleCount > 0
+    }
+
+    metadataFields.forEach(metadataField => {
+      const btn = el('button', 'td-props__metadata-source-card')
+      btn.type = 'button'
+      btn.draggable = true
+      btn.title = `${metadataField.name} / ${metadataField.code}`
+      const label = el('strong')
+      label.textContent = metadataField.name
+      const desc = el('span')
+      desc.textContent = `${metadataField.code} / ${metadataField.dataSource}`
+      btn.append(label, desc)
+      btn.addEventListener('dblclick', () => {
+        this.options.onAddField(blockIndex, metadataField)
+      })
+      btn.addEventListener('dragstart', event => {
+        writeMetadataFieldDragData(event.dataTransfer, metadataField)
+        btn.classList.add('td-props__metadata-source-card--dragging')
+      })
+      btn.addEventListener('dragend', () => {
+        btn.classList.remove('td-props__metadata-source-card--dragging')
+      })
+      cards.push({
+        element: btn,
+        searchText: [
+          metadataField.name,
+          metadataField.code,
+          metadataField.group,
+          metadataField.dataSource,
+          metadataField.permission,
+          metadataField.exportPath,
+          ...(metadataField.tags ?? [])
+        ].join(' ').toLowerCase()
+      })
+      quickList.append(btn)
+    })
+    search.addEventListener('input', applyFilter)
+
+    const dropZone = el('div', 'td-props__metadata-drop-zone')
+    dropZone.dataset.testid = 'business-metadata-field-drop-zone'
+    dropZone.textContent = '业务数据元添加区'
+    dropZone.addEventListener('dragover', event => {
+      if (!hasMetadataFieldDragData(event.dataTransfer)) return
+      event.preventDefault()
+      dropZone.classList.add('td-props__metadata-drop-zone--active')
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+    })
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('td-props__metadata-drop-zone--active')
+    })
+    dropZone.addEventListener('drop', event => {
+      const metadataFieldId = readMetadataFieldDragData(event.dataTransfer)
+      const metadataField = metadataFields.find(item => item.id === metadataFieldId)
+      if (!metadataField) return
+      event.preventDefault()
+      dropZone.classList.remove('td-props__metadata-drop-zone--active')
+      this.options.onAddField(blockIndex, metadataField)
+    })
+
+    return card(
+      '业务数据元',
+      [search, dropZone, quickList, empty],
+      '字段行可直接复用字段主数据新增已绑定字段。'
+    )
   }
 
   private _renderTextStylePresets(

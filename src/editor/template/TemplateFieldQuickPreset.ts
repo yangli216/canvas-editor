@@ -14,7 +14,18 @@ export interface IBusinessFieldQuickPreset {
       ITemplateFieldMetadata,
       'businessCode' | 'group' | 'dataSource' | 'permission' | 'exportPath'
     >
-  >
+  > & Pick<ITemplateFieldMetadata, 'metadataFieldId' | 'tags'>
+}
+
+export interface IBusinessFieldQuickPresetMetadataSource {
+  id: string
+  code: string
+  name: string
+  group: string
+  dataSource: string
+  permission: string
+  exportPath: string
+  tags?: string[]
 }
 
 export interface IBusinessFieldQuickPresetTarget {
@@ -94,7 +105,7 @@ const BUSINESS_FIELD_QUICK_PRESETS: IBusinessFieldQuickPresetDefinition[] = [
   {
     id: 'visit-number',
     label: '就诊号',
-    description: '短文本 / visit.no / his.visit',
+    description: '短文本 / encounter.admissionNo / his.encounter',
     keywords: ['就诊号', '住院号', '门诊号', 'hospital no', 'visit no'],
     fieldPatch: {
       type: 'text',
@@ -102,17 +113,17 @@ const BUSINESS_FIELD_QUICK_PRESETS: IBusinessFieldQuickPresetDefinition[] = [
       width: 180
     },
     metadataPatch: {
-      businessCode: 'visit.no',
+      businessCode: 'encounter.admissionNo',
       group: '就诊信息',
-      dataSource: 'his.visit',
-      permission: 'visit.read.basic',
-      exportPath: 'visit.no'
+      dataSource: 'his.encounter',
+      permission: 'encounter.read.basic',
+      exportPath: 'encounter.admissionNo'
     }
   },
   {
     id: 'visit-department',
     label: '就诊科室',
-    description: '短文本 / visit.department / his.visit',
+    description: '短文本 / encounter.department / his.encounter',
     keywords: ['就诊科室', '科室', 'department'],
     fieldPatch: {
       type: 'text',
@@ -120,17 +131,17 @@ const BUSINESS_FIELD_QUICK_PRESETS: IBusinessFieldQuickPresetDefinition[] = [
       width: 180
     },
     metadataPatch: {
-      businessCode: 'visit.department',
+      businessCode: 'encounter.department',
       group: '就诊信息',
-      dataSource: 'his.visit',
-      permission: 'visit.read.basic',
-      exportPath: 'visit.department'
+      dataSource: 'his.encounter',
+      permission: 'encounter.read.basic',
+      exportPath: 'encounter.department'
     }
   },
   {
     id: 'diagnosis-primary',
     label: '主诊断',
-    description: '短文本 / diagnosis.primary / his.diagnosis',
+    description: '短文本 / diagnosis.primary / emr.diagnosis',
     keywords: ['主诊断', '诊断', '初步诊断', 'admission diagnosis', 'diagnosis'],
     fieldPatch: {
       type: 'text',
@@ -141,8 +152,8 @@ const BUSINESS_FIELD_QUICK_PRESETS: IBusinessFieldQuickPresetDefinition[] = [
     metadataPatch: {
       businessCode: 'diagnosis.primary',
       group: '诊断信息',
-      dataSource: 'his.diagnosis',
-      permission: 'diagnosis.read.basic',
+      dataSource: 'emr.diagnosis',
+      permission: 'emr.read.diagnosis',
       exportPath: 'diagnosis.primary'
     }
   },
@@ -168,7 +179,7 @@ const BUSINESS_FIELD_QUICK_PRESETS: IBusinessFieldQuickPresetDefinition[] = [
   {
     id: 'vital-temperature',
     label: '体温',
-    description: '数值 / vitals.temperature / vitalsDevice',
+    description: '数值 / vitals.temperature / emr.vitals',
     keywords: ['体温', 'temperature', 'temp'],
     fieldPatch: {
       type: 'number',
@@ -179,8 +190,8 @@ const BUSINESS_FIELD_QUICK_PRESETS: IBusinessFieldQuickPresetDefinition[] = [
     metadataPatch: {
       businessCode: 'vitals.temperature',
       group: '生命体征',
-      dataSource: 'vitalsDevice',
-      permission: 'vitals.read.basic',
+      dataSource: 'emr.vitals',
+      permission: 'emr.read.vitals',
       exportPath: 'vitals.temperature'
     }
   }
@@ -210,6 +221,130 @@ function clonePreset(
         : undefined
     },
     metadataPatch: { ...preset.metadataPatch }
+  }
+}
+
+function getMetadataFieldKeywords(
+  field: IBusinessFieldQuickPresetMetadataSource
+): string[] {
+  return [
+    field.name,
+    field.code,
+    field.exportPath,
+    field.group,
+    field.dataSource,
+    ...(field.tags ?? [])
+  ].filter(Boolean)
+}
+
+function inferMetadataFieldPatch(
+  field: IBusinessFieldQuickPresetMetadataSource
+): Partial<ITemplateField> {
+  const text = normalizeText(getMetadataFieldKeywords(field).join(' '))
+  const base: Partial<ITemplateField> = {
+    label: field.name,
+    placeholder: `请输入${field.name}`,
+    width: undefined
+  }
+
+  if (text.includes('gender') || field.name.includes('性别')) {
+    return {
+      ...base,
+      type: 'select',
+      placeholder: '请选择性别',
+      options: GENDER_OPTIONS,
+      width: 120
+    }
+  }
+
+  if (text.includes('signature') || field.name.includes('签名')) {
+    return {
+      ...base,
+      type: 'signature',
+      placeholder: '签名',
+      width: 160
+    }
+  }
+
+  if (
+    text.includes('date') ||
+    text.includes('time') ||
+    field.name.includes('日期') ||
+    field.name.includes('时间')
+  ) {
+    return {
+      ...base,
+      type: 'date',
+      placeholder: '请选择日期'
+    }
+  }
+
+  if (
+    text.includes('age') ||
+    text.includes('vitals') ||
+    text.includes('temperature') ||
+    field.name.includes('年龄') ||
+    field.name.includes('体温')
+  ) {
+    return {
+      ...base,
+      type: 'number',
+      postfix: field.name.includes('年龄') ? '岁' : field.name.includes('体温') ? '℃' : undefined,
+      width: 120
+    }
+  }
+
+  if (
+    text.includes('notes') ||
+    text.includes('complaint') ||
+    text.includes('illness') ||
+    field.name.includes('主诉') ||
+    field.name.includes('病史')
+  ) {
+    return {
+      ...base,
+      type: 'textarea',
+      required: field.code === 'notes.chiefComplaint'
+    }
+  }
+
+  return {
+    ...base,
+    type: 'text'
+  }
+}
+
+function createPresetFromMetadataField(
+  field: IBusinessFieldQuickPresetMetadataSource
+): IBusinessFieldQuickPresetDefinition {
+  const fieldPatch = inferMetadataFieldPatch(field)
+  const typeText = fieldPatch.type === 'textarea'
+    ? '长文本'
+    : fieldPatch.type === 'number'
+      ? '数值'
+      : fieldPatch.type === 'date'
+        ? '日期'
+        : fieldPatch.type === 'select'
+          ? '枚举'
+          : fieldPatch.type === 'signature'
+            ? '签名'
+            : '短文本'
+
+  return {
+    id: field.id,
+    label: field.name,
+    description: `${typeText} / ${field.code} / ${field.dataSource}`,
+    keywords: getMetadataFieldKeywords(field),
+    fieldPatch,
+    metadataPatch: {
+      metadataFieldId: field.id,
+      businessCode: field.code,
+      group: field.group,
+      dataSource: field.dataSource,
+      permission: field.permission,
+      exportPath: field.exportPath,
+      tags: field.tags
+    }
   }
 }
 
@@ -267,15 +402,26 @@ function getPresetScore(
   return score
 }
 
-export function getBusinessFieldQuickPresets(): IBusinessFieldQuickPreset[] {
-  return BUSINESS_FIELD_QUICK_PRESETS.map(clonePreset)
+function getPresetDefinitions(
+  metadataFields?: IBusinessFieldQuickPresetMetadataSource[]
+): IBusinessFieldQuickPresetDefinition[] {
+  return metadataFields?.length
+    ? metadataFields.map(createPresetFromMetadataField)
+    : BUSINESS_FIELD_QUICK_PRESETS
+}
+
+export function getBusinessFieldQuickPresets(
+  metadataFields?: IBusinessFieldQuickPresetMetadataSource[]
+): IBusinessFieldQuickPreset[] {
+  return getPresetDefinitions(metadataFields).map(clonePreset)
 }
 
 export function recommendBusinessFieldQuickPresets(
   target: IBusinessFieldQuickPresetTarget,
-  limit = 3
+  limit = 3,
+  metadataFields?: IBusinessFieldQuickPresetMetadataSource[]
 ): IBusinessFieldQuickPreset[] {
-  return BUSINESS_FIELD_QUICK_PRESETS
+  return getPresetDefinitions(metadataFields)
     .map(preset => ({ preset, score: getPresetScore(target, preset) }))
     .filter(item => item.score > 0)
     .sort((left, right) => {
@@ -286,6 +432,21 @@ export function recommendBusinessFieldQuickPresets(
     })
     .slice(0, limit)
     .map(item => clonePreset(item.preset))
+}
+
+export function createTemplateFieldFromBusinessMetadataField(
+  id: string,
+  metadataField: IBusinessFieldQuickPresetMetadataSource
+): ITemplateField {
+  return applyBusinessFieldQuickPreset(
+    {
+      id,
+      type: 'text',
+      label: metadataField.name,
+      placeholder: `请输入${metadataField.name}`
+    },
+    createPresetFromMetadataField(metadataField)
+  )
 }
 
 export function applyBusinessFieldQuickPreset(
